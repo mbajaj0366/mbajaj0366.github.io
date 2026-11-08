@@ -2424,13 +2424,13 @@ function renderSettings2(){
       <li>Allow the microphone the first time you tap 🎤.</li></ul>
   </details>`;
   $('#set-key-eye').onclick=()=>{ const i=$('#set-key'); i.type=i.type==='password'?'text':'password'; };
-  $('#set-key-save').onclick=async()=>{ const k=$('#set-key').value.trim(); if(!k) return; LOC.set('ct-api-key',k);
+  $('#set-key-save').onclick=async()=>{ const k=$('#set-key').value.replace(/\s+/g,''); if(!k) return; if(/[^\x21-\x7e]/.test(k)||!/^sk-/.test(k)){ $('#set-key-st').textContent='That doesn\'t look like an Anthropic key (it should start with sk-ant-). Copy it again from console.anthropic.com.'; return; } $('#set-key').value=k; LOC.set('ct-api-key',k);
     LOC.set('ct-model',$('#set-model').value.trim()); LOC.set('ct-model-quick',$('#set-model-q').value.trim());
     $('#set-key-st').textContent='Testing…';
     try{ const t=await ask('Reply with exactly: OK',{tier:'quick'}); $('#set-key-st').textContent=/ok/i.test(t)?'✓ Works':'✓ Connected'; setAiPill(); rerender(); renderSettings2(); toast('Claude is connected.'); }
     catch(e){ $('#set-key-st').textContent=aiErr(e); if(e&&e.code==='bad_key') LOC.set('ct-api-key',''); setAiPill(); } };
   if($('#set-key-del')) $('#set-key-del').onclick=()=>{ LOC.set('ct-api-key',''); setAiPill(); renderSettings2(); rerender(); };
-  $('#set-gh-go').onclick=async()=>{ const t=$('#set-gh').value.trim(); if(!t) return toast('Paste your GitHub token first.'); await connectSync(t); renderSettings2(); };
+  $('#set-gh-go').onclick=async()=>{ const t=$('#set-gh').value.replace(/\s+/g,''); if(t&&/[^\x21-\x7e]/.test(t)) return toast('That token has invalid characters. Copy it again from GitHub.'); if(!t) return toast('Paste your GitHub token first.'); await connectSync(t); renderSettings2(); };
   if($('#set-gh-now')) $('#set-gh-now').onclick=()=>pullCloud();
   if($('#set-gh-off')) $('#set-gh-off').onclick=()=>{ LOC.set('ct-gh-token',''); LOC.set('ct-gist-id',''); syncReady=false; setSync('Not connected','off'); renderSettings2(); };
   $('#me-save').onclick=()=>{ S.me={name:$('#me-name').value.trim(), age:$('#me-age').value.trim(), gender:$('#me-g').value, city:$('#me-city').value.trim(), jobFr:$('#me-jobfr').value.trim(), jobEn:$('#me-joben').value.trim(), about:$('#me-about').value.trim()};
