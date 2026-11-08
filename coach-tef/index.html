@@ -2488,7 +2488,15 @@ async function readSources(files, onStatus){
     seen.set(key, r.name); out.push({name:r.name, kind:r.kind, text}); }
   return out;
 }
-function guessChapter(files){ for(const f of files){ const m=f.name.match(/chap\w*[\s_\-]*(\d{1,2})/i)||f.name.match(/lesson[\s_\-]*0?(\d{1,2})/i)||f.name.match(/\bch[\s_\-]*(\d{1,2})\b/i); if(m) return +m[1]; } return ''; }
+async function filesFromEntries(entries){
+  const out=[];
+  const walk=async(en,path)=>{ if(en.isFile){ const f=await new Promise((res,rej)=>en.file(res,rej)); if(!isJunk(path+f.name)){ try{ Object.defineProperty(f,'relPath',{value:path+f.name}); }catch(e){} out.push(f); } }
+    else if(en.isDirectory){ const rd=en.createReader(); let batch; do{ batch=await new Promise((res,rej)=>rd.readEntries(res,rej)); for(const c of batch) await walk(c, path+en.name+'/'); } while(batch.length); } };
+  for(const en of entries) await walk(en,'');
+  return out;
+}
+function guessChapter(files){ for(const f of files){ const nm=(f.relPath||f.webkitRelativePath||'')+' '+f.name; const m=nm.match(/chap\w*[\s_\-]*(\d{1,2})/i)||nm.match(/lesson[\s_\-]*0?(\d{1,2})/i)||nm.match(/\bch[\s_\-]*(\d{1,2})\b/i); if(m) return +m[1]; } return ''; }
+function guessChapterOld(files){ for(const f of files){ const m=f.name.match(/chap\w*[\s_\-]*(\d{1,2})/i)||f.name.match(/lesson[\s_\-]*0?(\d{1,2})/i)||f.name.match(/\bch[\s_\-]*(\d{1,2})\b/i); if(m) return +m[1]; } return ''; }
 
 /* ---------- 2. Claude plans and builds the chapter ---------- */
 const ITEM_SHAPES_FULL = ITEM_SHAPES + `
@@ -2580,9 +2588,11 @@ function importBox(){
   return `<div class="card" id="imp-card"><div class="kicker">Add a chapter</div>
     <div class="dropzone" id="imp-drop" tabindex="0" role="button" aria-label="Choose chapter files">
       <div class="big">📦 Drop a French with Alexa chapter here</div>
-      <div class="small muted">The chapter's zip, or its PDFs and exercise pages. Tap to choose files.</div>
+      <div class="small muted">The chapter folder, its zip, or its PDFs. Or tap to choose files.</div>
       <input type="file" id="imp-file" accept=".zip,.pdf,.html,.htm,.txt,application/zip,application/pdf,text/html" multiple hidden>
+      <input type="file" id="imp-dir" webkitdirectory directory multiple hidden>
     </div>
+    <div class="row" style="justify-content:center"><button class="btn ghost" id="imp-pick-files" type="button">Choose zip or PDFs</button><button class="btn ghost" id="imp-pick-dir" type="button">Choose a folder</button></div>
     <div id="imp-sel"></div>
     <details><summary class="small muted">Or paste text instead</summary>
       <div class="row"><label class="small" for="add-n">Chapter</label><input class="inp" id="add-n" type="number" min="1" max="40" style="width:90px"><input class="inp" id="add-t" type="text" placeholder="Title" style="flex:1;min-width:160px"></div>
@@ -2594,8 +2604,13 @@ function wireImport(){
   dz.onclick=()=>fi.click(); dz.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); fi.click(); } };
   ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); dz.classList.add('over'); }));
   ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); dz.classList.remove('over'); }));
-  dz.addEventListener('drop',e=>{ const fs=[...(e.dataTransfer&&e.dataTransfer.files||[])]; if(fs.length) pickFiles(fs); });
+  dz.addEventListener('drop',async e=>{ const dt=e.dataTransfer; if(!dt) return;
+    const entries=[...(dt.items||[])].map(it=>it.webkitGetAsEntry&&it.webkitGetAsEntry()).filter(Boolean);
+    let fs = entries.some(en=>en.isDirectory) ? await filesFromEntries(entries) : [...(dt.files||[])];
+    if(fs.length) pickFiles(fs); else toast('Nothing to read there. Drop the chapter folder, its zip or its PDFs.'); });
   fi.onchange=()=>{ const fs=[...fi.files]; fi.value=''; if(fs.length) pickFiles(fs); };
+  const fd=$('#imp-dir'); fd.onchange=()=>{ const fs=[...fd.files].filter(f=>!isJunk(f.webkitRelativePath||f.name)); fd.value=''; if(fs.length) pickFiles(fs); else toast('That folder has no files.'); };
+  $('#imp-pick-files').onclick=()=>fi.click(); $('#imp-pick-dir').onclick=()=>fd.click();
   const nums=chNums(); if($('#add-n')) $('#add-n').value=(nums[nums.length-1]||6)+1;
   if($('#add-go')) $('#add-go').onclick=()=>{ const n=+$('#add-n').value, t=$('#add-t').value.trim(), text=$('#add-text').value.trim();
     if(!n||!t||text.length<80) return toast('Add a number, a title and at least a paragraph of content.');
@@ -2604,7 +2619,7 @@ function wireImport(){
 }
 function pickFiles(files){
   const g=guessChapter(files), nums=chNums(), def=g||((nums[nums.length-1]||6)+1);
-  $('#imp-sel').innerHTML=`<div class="row" style="margin-top:10px"><span class="small"><b>${files.length} file${files.length>1?'s':''}:</b> ${escH(files.map(f=>f.name).join(', ').slice(0,160))}</span></div>
+  $('#imp-sel').innerHTML=`<div class="row" style="margin-top:10px"><span class="small"><b>${files.length} file${files.length>1?'s':''}:</b> ${escH(files.map(f=>f.name).join(', ').slice(0,160))}${files.length>4?'…':''}</span></div>
     <div class="row"><label class="small" for="imp-n">Chapter number</label><input class="inp" id="imp-n" type="number" min="1" max="60" value="${def}" style="width:90px">
     <button class="btn solid big" id="imp-go" type="button">Build the lesson ▶</button></div>
     <p class="small muted" style="margin:0">Claude reads every file and builds the full lesson. Usually 3–8 minutes, using your API key. Keep the app open.</p>`;
