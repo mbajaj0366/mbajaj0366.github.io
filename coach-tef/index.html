@@ -873,17 +873,22 @@ function lcsKeep(a,b){ const m=a.length,n=b.length,d=Array.from({length:m+1},()=
   for(let i=m-1;i>=0;i--)for(let j=n-1;j>=0;j--)d[i][j]=a[i]===b[j]?d[i+1][j+1]+1:Math.max(d[i+1][j],d[i][j+1]);
   const keep=new Array(m).fill(false); let i=0,j=0; while(i<m&&j<n){ if(a[i]===b[j]){keep[i]=true;i++;j++} else if(d[i+1][j]>=d[i][j+1]) i++; else j++; }
   return {len:d[0][0], keep}; }
-function compareWords(target, heard){
+function soundKey(w){ // spelling-insensitive key: elle nage = elles nagent, parler = parlez = parlé
+  let s=w; if(s.length>4) s=s.replace(/ent$/,''); s=s.replace(/[sxtdzrp]+$/,'').replace(/e+$/,'');
+  s=s.replace(/aim|ain|ein|im(?=[^aeiou]|$)|in(?=[^aeiou]|$)/g,'1').replace(/eau|au/g,'o').replace(/ai|ei/g,'e').replace(/qu/g,'k').replace(/ph/g,'f').replace(/(.)\1+/g,'$1');
+  return s||w; }
+function compareWords(target, heard, sound){
   const parts=String(target).split(/(\s+)/), idx=[], tk=[];
   parts.forEach((w,i)=>{ if(i%2===0) keyOf(w).split(' ').filter(Boolean).forEach(k=>{ idx.push(i); tk.push(k); }); });
-  const hk=keyOf(heard).split(' ').filter(Boolean);
+  let hk=keyOf(heard).split(' ').filter(Boolean);
+  if(sound){ for(let i=0;i<tk.length;i++) tk[i]=soundKey(tk[i]); hk=hk.map(soundKey); }
   const {len,keep}=lcsKeep(tk,hk), bad=new Set(); idx.forEach((pi,k)=>{ if(!keep[k]) bad.add(pi); });
   const extra = Math.max(0, hk.length - len);
   const ratio = tk.length ? len/(tk.length + Math.max(0, extra-1)*0.5) : 0;
   return { ratio:Math.min(1,ratio), html:parts.map((w,i)=> i%2?w:(bad.has(i)?'<span class="bw">'+escH(w)+'</span>':'<span class="gw">'+escH(w)+'</span>')).join(''), missed:[...bad].map(i=>parts[i]) };
 }
-function bestWords(targets, heardList){ let best=null;
-  targets.forEach(t=>heardList.forEach(h=>{ const r=compareWords(t,h); if(!best||r.ratio>best.ratio) best={...r, h, t}; })); return best; }
+function bestWords(targets, heardList, sound){ let best=null;
+  targets.forEach(t=>heardList.forEach(h=>{ const r=compareWords(t,h,sound); if(!best||r.ratio>best.ratio) best={...r, h, t}; })); return best; }
 function gradeTyped(inputs, accepts){
   for(const inp of inputs){ const k=keyOf(inp); if(!k) continue;
     for(const a of accepts){ if(keyOf(a)===k) return {ok:true, accentOk:keyOf(inp,true)===keyOf(a,true), match:a, input:inp}; } }
@@ -975,17 +980,17 @@ function listen(h){
   if(micEnding){ h.error('busy'); return null; }
   if(!SRC){ h.error('unsupported'); return null; }
   let rec; try{ rec=new SRC(); }catch(e){ h.error('unsupported'); return null; }
-  rec.lang='fr-FR'; rec.interimResults=true; rec.maxAlternatives=5; rec.continuous=false;
+  rec.lang='fr-FR'; rec.interimResults=true; rec.maxAlternatives=5; rec.continuous=!(IS_IOS||IS_SAFARI);   // Chrome: keep listening through pauses
   let finals=null, interim='', errored=false, ended=false, silenceT=null, hardT=null;
   const stopIn=ms=>{ clearTimeout(silenceT); silenceT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, ms); };
-  rec.onstart=()=>{ micOK=true; micNote('listening'); h.start&&h.start(); hardT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, 15000); };
+  rec.onstart=()=>{ micOK=true; micNote('listening'); h.start&&h.start(); hardT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, 25000); };
   rec.onresult=e=>{
     const res=[...e.results], txt=res.map(r=>r[0].transcript).join(' ').replace(/\s+/g,' ').trim();
     interim=txt; h.interim&&h.interim(txt);
     const last=res[res.length-1];
     if(last.isFinal){ const before=res.slice(0,-1).map(r=>r[0].transcript).join(' ');
-      finals=[txt, ...[...last].slice(1).map(a=>(before+' '+a.transcript).replace(/\s+/g,' ').trim())]; stopIn(250); }
-    else stopIn(IS_IOS||IS_SAFARI ? 1300 : 2000);   // Safari often never marks results final: stop after a short silence
+      finals=[txt, ...[...last].slice(1).map(a=>(before+' '+a.transcript).replace(/\s+/g,' ').trim())]; stopIn(rec.continuous ? 2600 : 300); }
+    else stopIn(IS_IOS||IS_SAFARI ? 1800 : 3000);   // pauses are fine: stop only after a longer silence, or when you tap 🎤   // Safari often never marks results final: stop after a short silence
   };
   rec.onerror=e=>{ const c=e.error||'unknown'; micNote('error: '+c); if(c==='aborted') return; errored=true;
     if(c==='not-allowed'||c==='service-not-allowed'){ micOK=false; const ms=$('#mic-state'); if(ms) ms.textContent=micStateText(); h.error('blocked'); }
@@ -1193,13 +1198,13 @@ function speakCard(q, card, api, {targets, show, en, k, onGrade, sayAns}){
 R.sp=(q,card,api)=>{
   const targets=[q.fr].concat(q.alt||[]);
   speakCard(q,card,api,{k:q.k||'Read it aloud', show:escH(q.fr), en:q.en, sayAns:()=>q.fr,
-    onGrade(alts){ const b=bestWords(targets,alts); const ok=b.ratio>=.8;
+    onGrade(alts){ const b=bestWords(targets,alts,true); const ok=b.ratio>=.8;
       return {ok, html:b.html, heard:b.h, pct:Math.round(b.ratio*100), ans:q.fr, note:!ok&&b.missed.length?'Work on: <b>'+b.missed.map(escH).join(', ')+'</b>. Tap 🐢 Slow, then try again.':''}; }});
 };
 R.sy=(q,card,api)=>{
   const targets=[q.fr].concat(q.alt||[]);
   speakCard(q,card,api,{k:q.k||'Say it in French', show:'“'+escH(q.en)+'”', en:'', sayAns:()=>q.fr,
-    onGrade(alts){ const b=bestWords(targets,alts); const ok=b.ratio>=.8;
+    onGrade(alts){ const b=bestWords(targets,alts,true); const ok=b.ratio>=.8;
       return {ok, html:b.html, heard:b.h, pct:Math.round(b.ratio*100), ans:b.t, note:!ok&&b.missed.length?'Missing or wrong: <b>'+b.missed.map(escH).join(', ')+'</b>':''}; }});
 };
 R.clk=(q,card,api)=>{
