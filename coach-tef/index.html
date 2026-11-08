@@ -1069,7 +1069,7 @@ function wireInput(card, id, onCheck){
   micB.onclick=()=>listen({
     start(){ micB.classList.add('live'); hint.textContent='Listening… speak now. Tap 🎤 again when you\'re done.'; },
     interim(t){ inp.value=t; },
-    final(alts){ inp.value=alts[0]; inp._alts=alts; hint.textContent=''; api_ready(); onCheck(); },
+    final(alts){ inp.value=alts[0]; inp._alts=alts; hint.textContent='This is what I heard. Fix it if needed, then press Check (or tap 🎤 to say it again).'; api_ready(); },
     end(){ micB.classList.remove('live'); },
     error(k){ micB.classList.remove('live'); hint.innerHTML = escH(micMsg(k)); if(k==='blocked') inp.focus(); }
   });
@@ -1167,8 +1167,8 @@ R.conj=(q,card,api)=>{
 function speakCard(q, card, api, {targets, show, en, k, onGrade, sayAns}){
   card.innerHTML = kick(k) + ctxHTML(q) + `<div class="prompt" id="sp-t">${show}${en?'<span class="en">'+escH(en)+'</span>':''}</div>
     <div class="speak"><button class="mic" id="sp-mic" type="button" aria-label="Speak">${MIC_SVG}</button><div class="status" id="sp-st">Tap the mic and say it in French.</div></div>
-    <div class="dict ${micOK?'':'show'}" id="sp-dict"><b>The mic isn't available right now.</b> Tap the box below, switch to the French keyboard and use its 🎤 dictation key. It checks when you stop. On iPhone, check Settings → Siri → Siri &amp; Dictation is on and that this site may use the microphone.</div>
-    <div class="inrow"><input class="inp" id="sp-in" type="text" lang="fr" placeholder="…or dictate / type it here" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><button class="mini" id="sp-ok" type="button">Check</button></div>
+    <div class="dict ${micOK?'':'show'}" id="sp-dict"><b>The mic isn't available right now.</b> Tap the box below, switch to the French keyboard and use its 🎤 dictation key. Then tap Check. On iPhone, check Settings → Siri → Siri &amp; Dictation is on and that this site may use the microphone.</div>
+    <div class="inrow"><input class="inp" id="sp-in" type="text" lang="fr" placeholder="…or type / dictate it here, then tap Check" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"><button class="mini" id="sp-ok" type="button">Check</button></div>
     <div class="row"><button class="mini" id="sp-hear" type="button">🔊 ${q.t==='sy'?'Hint':'Hear it'}</button><button class="mini" id="sp-slow" type="button">🐢 Slow</button></div>
     <div id="sp-heard"></div>`;
   wireCtx(q,card); api.speechMode();
@@ -1181,13 +1181,13 @@ function speakCard(q, card, api, {targets, show, en, k, onGrade, sayAns}){
     api.result(r.ok,{ans:r.ans, say:sayAns(), title:r.ok?null:'Almost. Listen and try again', note:r.note, retry:()=>{ $('#sp-heard',card).innerHTML=''; inp.value=''; start(); }});
   }
   function start(){ listen({ start(){ mic.classList.add('live'); st.textContent='Listening… speak now. Tap the mic again when you\'re done.'; }, interim(t){ st.textContent='… '+t; },
-      final(alts){ st.textContent='Tap the mic to try again.'; grade(alts); }, end(){ mic.classList.remove('live'); },
+      final(alts){ inp.value=alts[0]; inp._alts=alts; st.textContent='This is what I heard. Fix it if needed, then tap Check. Tap 🎤 to say it again.'; $('#sp-ok',card).classList.add('solid'); }, end(){ mic.classList.remove('live'); },
       error(kk){ mic.classList.remove('live'); if(kk==='blocked'){ $('#sp-dict',card).classList.add('show'); st.textContent=micMsg(kk); inp.focus(); } else st.textContent = micMsg(kk); } }); }
   mic.onclick=start;
-  let idle=null;
-  inp.addEventListener('input',()=>{ clearTimeout(idle); if(inp.value.trim()) idle=setTimeout(()=>grade([inp.value]),2200); });
-  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); clearTimeout(idle); if(inp.value.trim()) grade([inp.value]); } });
-  $('#sp-ok',card).onclick=()=>{ clearTimeout(idle); if(inp.value.trim()) grade([inp.value]); };
+  const answer=()=>{ const v=inp.value.trim(); if(!v) return; grade(inp._alts&&inp._alts[0]===inp.value?inp._alts:[v]); };
+  inp.addEventListener('input',()=>{ if(!inp._alts||inp._alts[0]!==inp.value) inp._alts=null; $('#sp-ok',card).classList.toggle('solid',!!inp.value.trim()); });
+  inp.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); e.stopPropagation(); answer(); } });
+  $('#sp-ok',card).onclick=answer;
   return { peeked:()=>peek };
 }
 R.sp=(q,card,api)=>{
@@ -1732,6 +1732,7 @@ function showView(v){
   VIEWS2.forEach(n=>{ const el=$('#v-'+n); if(el) el.hidden = n!==v; });
   $$('.tab[data-view]').forEach(t=>t.setAttribute('aria-selected', String(t.dataset.view===v)));
   document.body.classList.toggle('in-lesson', ['lesson','task','chat'].includes(v));
+  if(['lesson','task','chat'].includes(v)){ const st=$('#settings'); if(st&&!st.hidden){ st.hidden=true; $('#gear').setAttribute('aria-expanded','false'); } }
   if(seqStop) seqStop();
   if(v!=='lesson'){ LS=null; clearInterval(lsTimer); }
   if(TABS.includes(v) && location.hash!=='#'+v) history.replaceState(null,'','#'+v);
@@ -2051,7 +2052,7 @@ function renderChat(){
   const send=()=>{ const v=$('#rp-in').value.trim(); if(!v||RP.busy) return; $('#rp-in').value=''; rpAsk(v); };
   $('#rp-send').onclick=send; $('#rp-in').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
   $('#rp-mic').onclick=()=>listen({ start(){ $('#rp-mic').classList.add('live'); $('#rp-st').textContent='Listening… tap the mic again when you\'re done.'; }, interim(t){ $('#rp-in').value=t; },
-    final(a){ $('#rp-in').value=a[0]; $('#rp-st').textContent=''; send(); }, end(){ $('#rp-mic').classList.remove('live'); },
+    final(a){ $('#rp-in').value=a[0]; $('#rp-st').textContent='This is what I heard. Fix it if needed, then tap Send (or 🎤 to say it again).'; $('#rp-send').focus(); }, end(){ $('#rp-mic').classList.remove('live'); },
     error(k){ $('#rp-mic').classList.remove('live'); $('#rp-st').textContent = micMsg(k); if(k==='blocked') $('#rp-in').focus(); } });
   $('#rp-en').onclick=()=>{ RP.hideEn=!RP.hideEn; renderChat(); };
   $('#rp-done').onclick=rpFinish;
