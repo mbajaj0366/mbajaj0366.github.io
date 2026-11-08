@@ -863,6 +863,7 @@ function parseTime(raw){
 /* ---- answer matching ---- */
 function keyOf(s, keepAcc){
   let t=String(s).toLowerCase().replace(/œ/g,'oe').replace(/æ/g,'ae').replace(/[’`´]/g,"'");
+  t=t.replace(/\b(\d{1,2})\s*h(?:\s*(\d{1,2}))?\b/g,(m,a,b)=>(+a===1?'une heure':hourFr(+a)+' heures')+(b?' '+numFr(+b):''));
   t=t.replace(/\b\d+\b/g, d => +d<60 ? numFr(+d) : d);
   t=t.replace(/['\-]/g,' ').replace(/[«»"“”.,!?;:…()/]/g,' ');
   if(!keepAcc) t=stripAcc(t);
@@ -948,23 +949,56 @@ function confetti(){
 /* ================= microphone ================= */
 const SRC = window.SpeechRecognition || window.webkitSpeechRecognition;
 let micOK = !!SRC, activeRec=null;
-function micStateText(){ return micOK ? '🎤 Microphone: tap a mic button and allow access when asked.' : '🎤 Speech recognition is unavailable in this browser. Use Safari or Chrome, or your keyboard\'s dictation key in the answer box.'; }
+/* ---------------- microphone (robust across Chrome, Safari Mac, iPhone) ---------------- */
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+const IS_SAFARI = /^((?!chrome|chromium|crios|fxios|android|edg).)*safari/i.test(navigator.userAgent);
+const micLog=[];
+function micNote(s){ micLog.push(new Date().toLocaleTimeString()+' · '+s); if(micLog.length>30) micLog.shift(); }
+function micMsg(k){
+  switch(k){
+    case 'blocked': return IS_IOS
+      ? 'The microphone or speech recognition is turned off. On iPhone: Settings → Apps → Safari → Microphone → Allow, and Settings → Siri → turn on “Siri & Dictation”. Then tap 🎤 again. You can also use the keyboard\'s 🎤 in the box.'
+      : 'The microphone is blocked for this site. In Chrome: click the icon left of the address bar → Microphone → Allow, then tap 🎤 again. On a Mac also check System Settings → Privacy & Security → Microphone → Chrome is on.';
+    case 'nospeech': return 'I didn\'t hear anything. Tap 🎤, wait for the red pulse, then speak clearly.';
+    case 'network': return 'Speech recognition needs internet (the browser sends your voice to its speech service). Check your connection and tap 🎤 again.';
+    case 'audio-capture': return 'No microphone was found, or another app is using it. Close other apps using the mic and try again.';
+    case 'unsupported': return 'This browser can\'t do speech recognition. Use Chrome on your Mac or Safari on iPhone, or the keyboard\'s 🎤 dictation in the box.';
+    case 'language-not-supported': return 'French speech recognition isn\'t available in this browser. Use Chrome, or add French to your keyboard\'s dictation languages.';
+    case 'busy': return 'Still finishing the last recording. Tap 🎤 again in a second.';
+    default: return 'The mic stopped unexpectedly ('+k+'). Tap 🎤 to try again.';
+  }
+}
+function micStateText(){ return !SRC ? micMsg('unsupported') : micOK ? '🎤 Microphone ready. Tap a 🎤 button and allow access when asked.' : micMsg('blocked'); }
+let micEnding=false;
 function listen(h){
-  if(activeRec){ try{ activeRec.stop(); }catch(e){} return null; }
-  if(!micOK){ h.error('blocked'); return null; }
-  let rec; try{ rec=new SRC(); }catch(e){ micOK=false; h.error('blocked'); return null; }
+  if(activeRec){ micEnding=true; setTimeout(()=>{ micEnding=false; },2500); try{ activeRec.stop(); }catch(e){} return null; }   // tapping again stops and grades what was said
+  if(micEnding){ h.error('busy'); return null; }
+  if(!SRC){ h.error('unsupported'); return null; }
+  let rec; try{ rec=new SRC(); }catch(e){ h.error('unsupported'); return null; }
   rec.lang='fr-FR'; rec.interimResults=true; rec.maxAlternatives=5; rec.continuous=false;
-  let finals=null;
-  rec.onstart=()=>{ h.start&&h.start(); };
-  rec.onresult=e=>{ const txt=[...e.results].map(r=>r[0].transcript).join(' '); h.interim&&h.interim(txt);
-    const last=e.results[e.results.length-1]; if(last.isFinal){ finals=[...last].map(a=>a.transcript); if(e.results.length>1) finals.unshift(txt); } };
-  rec.onerror=e=>{ if(['not-allowed','service-not-allowed','audio-capture'].includes(e.error)){ micOK=false; $('#mic-state').textContent=micStateText(); h.error('blocked'); }
-    else if(e.error==='no-speech') h.error('nospeech'); else if(e.error!=='aborted') h.error(e.error); };
-  rec.onend=()=>{ activeRec=null; h.end&&h.end(); if(finals) h.final(finals); };
+  let finals=null, interim='', errored=false, ended=false, silenceT=null, hardT=null;
+  const stopIn=ms=>{ clearTimeout(silenceT); silenceT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, ms); };
+  rec.onstart=()=>{ micOK=true; micNote('listening'); h.start&&h.start(); hardT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, 15000); };
+  rec.onresult=e=>{
+    const res=[...e.results], txt=res.map(r=>r[0].transcript).join(' ').replace(/\s+/g,' ').trim();
+    interim=txt; h.interim&&h.interim(txt);
+    const last=res[res.length-1];
+    if(last.isFinal){ const before=res.slice(0,-1).map(r=>r[0].transcript).join(' ');
+      finals=[txt, ...[...last].slice(1).map(a=>(before+' '+a.transcript).replace(/\s+/g,' ').trim())]; stopIn(250); }
+    else stopIn(IS_IOS||IS_SAFARI ? 1300 : 2000);   // Safari often never marks results final: stop after a short silence
+  };
+  rec.onerror=e=>{ const c=e.error||'unknown'; micNote('error: '+c); if(c==='aborted') return; errored=true;
+    if(c==='not-allowed'||c==='service-not-allowed'){ micOK=false; const ms=$('#mic-state'); if(ms) ms.textContent=micStateText(); h.error('blocked'); }
+    else if(c==='no-speech') h.error('nospeech'); else h.error(c); };
+  rec.onend=()=>{ clearTimeout(silenceT); clearTimeout(hardT); micEnding=false; if(ended) return; ended=true; activeRec=null; h.end&&h.end();
+    const got = finals&&finals.length ? finals.filter(Boolean) : (interim ? [interim] : null);
+    micNote('heard: '+(got?'«'+got[0]+'»':'nothing'));
+    if(got&&got.length) h.final(got); else if(!errored) h.error('nospeech'); };
   synth&&synth.cancel(); activeRec=rec;
-  try{ rec.start(); }catch(e){ activeRec=null; micOK=false; h.error('blocked'); return null; }
+  try{ rec.start(); }catch(e){ activeRec=null; micNote('start failed: '+(e&&e.message)); h.error(e&&/not.?allowed/i.test(e.name||'')?'blocked':'busy'); return null; }
   return rec;
 }
+
 const MIC_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>';
 
 
@@ -1033,11 +1067,11 @@ function wireInput(card, id, onCheck){
   card.querySelectorAll(`[data-acc-for="${id}"] button`).forEach(b=>b.onclick=()=>{ const s=inp.selectionStart??inp.value.length, e=inp.selectionEnd??s; inp.value=inp.value.slice(0,s)+b.textContent+inp.value.slice(e); inp.focus(); inp.setSelectionRange(s+1,s+1); inp.dispatchEvent(new Event('input')); });
   const micB=card.querySelector(`[data-mic-for="${id}"]`), hint=card.querySelector(`[data-hint-for="${id}"]`);
   micB.onclick=()=>listen({
-    start(){ micB.classList.add('live'); hint.textContent='Listening… speak now.'; },
+    start(){ micB.classList.add('live'); hint.textContent='Listening… speak now. Tap 🎤 again when you\'re done.'; },
     interim(t){ inp.value=t; },
     final(alts){ inp.value=alts[0]; inp._alts=alts; hint.textContent=''; api_ready(); onCheck(); },
     end(){ micB.classList.remove('live'); },
-    error(k){ micB.classList.remove('live'); hint.innerHTML = k==='blocked' ? 'Mic blocked here: tap the box and use your keyboard\'s 🎤 dictation instead.' : k==='nospeech' ? 'I didn\'t hear anything. Tap 🎤 and try again.' : 'Mic error ('+escH(k)+').'; if(k==='blocked') inp.focus(); }
+    error(k){ micB.classList.remove('live'); hint.innerHTML = escH(micMsg(k)); if(k==='blocked') inp.focus(); }
   });
   return { setApi(r,u){ api_ready=r; api_un=u; }, values(){ return inp._alts ? inp._alts : [inp.value]; }, el:inp };
 }
@@ -1146,9 +1180,9 @@ function speakCard(q, card, api, {targets, show, en, k, onGrade, sayAns}){
     $('#sp-heard',card).innerHTML=`<div class="heard ${r.ok?'ok':'no'}"><div class="line">${r.html}</div><div class="meta">I heard: «${escH(r.heard)}»${r.pct!=null?' · '+r.pct+'% match':''}</div>${r.extra||''}</div>`;
     api.result(r.ok,{ans:r.ans, say:sayAns(), title:r.ok?null:'Almost. Listen and try again', note:r.note, retry:()=>{ $('#sp-heard',card).innerHTML=''; inp.value=''; start(); }});
   }
-  function start(){ listen({ start(){ mic.classList.add('live'); st.textContent='Listening… speak now.'; }, interim(t){ st.textContent='… '+t; },
+  function start(){ listen({ start(){ mic.classList.add('live'); st.textContent='Listening… speak now. Tap the mic again when you\'re done.'; }, interim(t){ st.textContent='… '+t; },
       final(alts){ st.textContent='Tap the mic to try again.'; grade(alts); }, end(){ mic.classList.remove('live'); },
-      error(kk){ mic.classList.remove('live'); if(kk==='blocked'){ $('#sp-dict',card).classList.add('show'); st.textContent='Mic unavailable here. Use keyboard dictation below.'; inp.focus(); } else st.textContent = kk==='nospeech'?'I didn\'t hear anything. Tap the mic and speak a bit louder.':'Mic error ('+kk+'). Tap to retry.'; } }); }
+      error(kk){ mic.classList.remove('live'); if(kk==='blocked'){ $('#sp-dict',card).classList.add('show'); st.textContent=micMsg(kk); inp.focus(); } else st.textContent = micMsg(kk); } }); }
   mic.onclick=start;
   let idle=null;
   inp.addEventListener('input',()=>{ clearTimeout(idle); if(inp.value.trim()) idle=setTimeout(()=>grade([inp.value]),2200); });
@@ -1159,13 +1193,13 @@ function speakCard(q, card, api, {targets, show, en, k, onGrade, sayAns}){
 R.sp=(q,card,api)=>{
   const targets=[q.fr].concat(q.alt||[]);
   speakCard(q,card,api,{k:q.k||'Read it aloud', show:escH(q.fr), en:q.en, sayAns:()=>q.fr,
-    onGrade(alts){ const b=bestWords(targets,alts); const ok=b.ratio>=.85;
+    onGrade(alts){ const b=bestWords(targets,alts); const ok=b.ratio>=.8;
       return {ok, html:b.html, heard:b.h, pct:Math.round(b.ratio*100), ans:q.fr, note:!ok&&b.missed.length?'Work on: <b>'+b.missed.map(escH).join(', ')+'</b>. Tap 🐢 Slow, then try again.':''}; }});
 };
 R.sy=(q,card,api)=>{
   const targets=[q.fr].concat(q.alt||[]);
   speakCard(q,card,api,{k:q.k||'Say it in French', show:'“'+escH(q.en)+'”', en:'', sayAns:()=>q.fr,
-    onGrade(alts){ const b=bestWords(targets,alts); const ok=b.ratio>=.85;
+    onGrade(alts){ const b=bestWords(targets,alts); const ok=b.ratio>=.8;
       return {ok, html:b.html, heard:b.h, pct:Math.round(b.ratio*100), ans:b.t, note:!ok&&b.missed.length?'Missing or wrong: <b>'+b.missed.map(escH).join(', ')+'</b>':''}; }});
 };
 R.clk=(q,card,api)=>{
@@ -2016,9 +2050,9 @@ function renderChat(){
   paintChat();
   const send=()=>{ const v=$('#rp-in').value.trim(); if(!v||RP.busy) return; $('#rp-in').value=''; rpAsk(v); };
   $('#rp-send').onclick=send; $('#rp-in').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); send(); } });
-  $('#rp-mic').onclick=()=>listen({ start(){ $('#rp-mic').classList.add('live'); $('#rp-st').textContent='Listening…'; }, interim(t){ $('#rp-in').value=t; },
+  $('#rp-mic').onclick=()=>listen({ start(){ $('#rp-mic').classList.add('live'); $('#rp-st').textContent='Listening… tap the mic again when you\'re done.'; }, interim(t){ $('#rp-in').value=t; },
     final(a){ $('#rp-in').value=a[0]; $('#rp-st').textContent=''; send(); }, end(){ $('#rp-mic').classList.remove('live'); },
-    error(k){ $('#rp-mic').classList.remove('live'); $('#rp-st').textContent = k==='blocked'?'Mic is blocked here: tap the box and use your keyboard\'s 🎤 dictation.':k==='nospeech'?'I didn\'t hear anything. Try again.':'Mic error ('+k+').'; if(k==='blocked') $('#rp-in').focus(); } });
+    error(k){ $('#rp-mic').classList.remove('live'); $('#rp-st').textContent = micMsg(k); if(k==='blocked') $('#rp-in').focus(); } });
   $('#rp-en').onclick=()=>{ RP.hideEn=!RP.hideEn; renderChat(); };
   $('#rp-done').onclick=rpFinish;
   $('#rp-x').onclick=()=>{ RP.ctl&&RP.ctl.abort(); clearInterval(rpTimer); const b=RP.o.back||'speak'; RP=null; showView(b); };
@@ -2101,7 +2135,7 @@ function taskView({kicker, task, en, minWords=30, seconds=0, speakMode=false, ba
   $('#tk-x').onclick=()=>{ clearInterval(tkTimer); showView(back); };
   if(speakMode) $('#tk-mic').onclick=()=>listen({ start(){ $('#tk-mic').classList.add('live'); $('#tk-st').textContent='Listening…'; }, interim(t){ $('#tk-st').textContent='… '+t; },
     final(a){ ta.value=(ta.value+' '+a[0]).trim(); ta.dispatchEvent(new Event('input')); $('#tk-st').textContent='Tap the mic to add more.'; }, end(){ $('#tk-mic').classList.remove('live'); },
-    error(k){ $('#tk-mic').classList.remove('live'); $('#tk-st').textContent=k==='blocked'?'Mic is blocked here: tap the box and use your keyboard\'s 🎤 dictation.':'Try again.'; if(k==='blocked') ta.focus(); } });
+    error(k){ $('#tk-mic').classList.remove('live'); $('#tk-st').textContent=micMsg(k); if(k==='blocked') ta.focus(); } });
   const submit=async()=>{ const t=ta.value.trim(); if(!t) return toast('Write (or say) something first.'); clearInterval(tkTimer);
     $('#tk-go').disabled=true; $('#tk-res').innerHTML='<p class="thinking">Claude is grading…</p>';
     try{ $('#tk-res').innerHTML=await grade(t); }catch(e){ $('#tk-res').innerHTML=`<div class="banner"><span>${escH(aiErr(e))}</span></div>`; $('#tk-go').disabled=false; } };
@@ -2417,12 +2451,26 @@ function renderSettings2(){
     <textarea class="inp" id="me-about" style="min-height:90px" placeholder="Anything Claude can use in examples: hobbies, family, food you like…">${escH(M.about)}</textarea>
     <div class="row"><button class="btn solid" id="me-save" type="button">Save</button></div>
   </details>
+  <details id="mt-box"><summary><b>🎤 Mic test</b> <span class="small muted">check that speaking works on this device</span></summary>
+    <p class="small muted">Tap the mic and say: <b>« Bonjour, je m'appelle Coach. Il est quinze heures trente. »</b></p>
+    <div class="speak"><button class="mic" id="mt-mic" type="button" aria-label="Test the microphone" style="width:64px;height:64px">${MIC_SVG}</button><div class="status" id="mt-st">${escH(micStateText())}</div></div>
+    <div id="mt-out" class="small"></div>
+    <details><summary class="small muted">Diagnostics (send these to Claude if the mic misbehaves)</summary><pre class="md" id="mt-diag"></pre><button class="btn ghost" id="mt-copy" type="button">Copy diagnostics</button></details>
+  </details>
   <details><summary><b>📲 Install on your phone and Mac</b></summary>
     <ul class="small" style="margin:6px 0;padding-left:18px;display:grid;gap:4px">
       <li><b>iPhone (Safari):</b> Share → <b>Add to Home Screen</b>. Mic needs Settings → Siri → <b>Siri & Dictation</b> on.</li>
       <li><b>Mac (Chrome):</b> ⋮ → <b>Cast, save and share</b> → <b>Install page as app</b>. <b>Mac (Safari):</b> File → <b>Add to Dock</b>.</li>
       <li>Allow the microphone the first time you tap 🎤.</li></ul>
   </details>`;
+  const diag=()=>`Browser: ${navigator.userAgent}\nSpeech recognition: ${SRC?'available':'missing'} · iOS: ${IS_IOS} · Safari: ${IS_SAFARI} · Installed app: ${matchMedia('(display-mode: standalone)').matches}\nFrench voices: ${voices.length}\nMic log:\n${micLog.join('\n')||'(empty)'}`;
+  $('#mt-diag').textContent=diag();
+  $('#mt-copy').onclick=async()=>{ try{ await navigator.clipboard.writeText(diag()); toast('Copied.'); }catch(e){ toast('Select the text and copy it.'); } };
+  $('#mt-mic').onclick=()=>listen({ start(){ $('#mt-mic').classList.add('live'); $('#mt-st').textContent='Listening… speak now. Tap the mic again when you\'re done.'; },
+    interim(t){ $('#mt-st').textContent='… '+t; },
+    final(alts){ const t=parseTime(alts.join(' ')); $('#mt-out').innerHTML=`<div class="heard ok"><div class="line">${escH(alts[0])}</div><div class="meta">✓ The mic works. ${alts.length>1?'Other guesses: '+alts.slice(1,4).map(escH).join(' · '):''}${t!==null?' · Time understood as '+Math.floor(t/60)+':'+String(t%60).padStart(2,'0'):''}</div></div>`; $('#mt-st').textContent='Tap the mic to test again.'; $('#mt-diag').textContent=diag(); },
+    end(){ $('#mt-mic').classList.remove('live'); },
+    error(k){ $('#mt-mic').classList.remove('live'); $('#mt-out').innerHTML=`<div class="heard no"><div class="meta">${escH(micMsg(k))}</div></div>`; $('#mt-diag').textContent=diag(); } });
   $('#set-key-eye').onclick=()=>{ const i=$('#set-key'); i.type=i.type==='password'?'text':'password'; };
   $('#set-key-save').onclick=async()=>{ const k=$('#set-key').value.replace(/\s+/g,''); if(!k) return; if(/[^\x21-\x7e]/.test(k)||!/^sk-/.test(k)){ $('#set-key-st').textContent='That doesn\'t look like an Anthropic key (it should start with sk-ant-). Copy it again from console.anthropic.com.'; return; } $('#set-key').value=k; LOC.set('ct-api-key',k);
     LOC.set('ct-model',$('#set-model').value.trim()); LOC.set('ct-model-quick',$('#set-model-q').value.trim());
