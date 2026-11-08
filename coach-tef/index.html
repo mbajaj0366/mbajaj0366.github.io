@@ -280,6 +280,12 @@ pre.md{white-space:pre-wrap;background:var(--sunk);border-radius:12px;padding:12
 #settings2 summary{cursor:pointer;list-style:revert}
 #settings2 details[open]{display:grid;gap:8px}
 #settings2 a{color:var(--accent)}
+.dropzone{border:2px dashed var(--line);border-radius:16px;padding:26px 16px;text-align:center;cursor:pointer;display:grid;gap:6px;background:var(--bg);transition:border-color .15s,background .15s}
+.dropzone:hover,.dropzone.over{border-color:var(--accent);background:var(--accent-soft)}
+.dropzone .big{font-family:var(--display);font-weight:800;font-size:20px}
+.implog{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+.implog li{background:var(--bg);border-radius:10px;padding:8px 12px;font-size:14px}
+.implog li.run{background:var(--accent-soft)} .implog li.err{background:var(--hot-soft)}
 .stat.off b{color:var(--muted)}
 </style></head><body>
 <header class="top wrap">
@@ -1317,10 +1323,9 @@ function loadChapters(){
     CH[d.n]=ch;
   });
 }
-function loadCustomChapters(){
-  Object.entries(S.custom||{}).forEach(([n,c])=>{ n=+n; if(CH[n]&&!CH[n].custom) return;
+function loadCustomChaptersNotes(n,c){ {
     CH[n]={n, t:c.t, sb:'added by you · Claude builds the practice', units:[], cards:[], custom:true, text:c.text,
-      tef:'Ask “explain” for how this chapter links to the TEF.', scen:['A short everyday conversation using this chapter','Ask and answer questions using this chapter\'s grammar'], wr:['Write 60–80 words using the vocabulary and grammar of this chapter.']}; });
+      tef:'Ask “explain” for how this chapter links to the TEF.', scen:['A short everyday conversation using this chapter','Ask and answer questions using this chapter\'s grammar'], wr:['Write 60–80 words using the vocabulary and grammar of this chapter.']}; }
 }
 function loadGenerated(){ Object.values(S.gen||{}).forEach(q=>{ registerItem(q); }); }
 const chNums = () => Object.keys(CH).map(Number).sort((a,b)=>a-b);
@@ -1462,17 +1467,18 @@ async function callClaude(messages, {model, maxTokens, onText, signal}){
   } else { const d=await r.json(); text=(d.content||[]).filter(c=>c.type==='text').map(c=>c.text).join(''); }
   return text;
 }
-async function ask(input, {json=false, tier='default', onText, signal}={}){
+async function ask(input, {json=false, tier='default', onText, signal, maxTokens}={}){
   if(!aiOn()) throw {code:'unavailable'};
   let msgs = typeof input==='string' ? [{role:'user', content:input}] : input.map(m=>({role:m.role, content:String(m.content)}));
   const merged=[]; msgs.forEach(m=>{ const l=merged[merged.length-1]; if(l&&l.role===m.role) l.content+='\n\n'+m.content; else merged.push({...m}); });
   if(merged[0].role!=='user') merged.unshift({role:'user', content:'(begin)'});
   if(json) merged[merged.length-1].content+='\n\nReply with only valid JSON: no markdown, no code fences, no other text.';
   const model = tier==='quick' ? modelQuick() : modelMain();
-  const text=await callClaude(merged,{model, maxTokens: json?6000:1000, onText, signal});
+  const mt=maxTokens||(json?6000:1000), stream=onText||(mt>4000?()=>{}:null);
+  const text=await callClaude(merged,{model, maxTokens:mt, onText:stream, signal});
   if(!json) return text;
   try{ return parseJsonLoose(text); }
-  catch(e){ const again=await callClaude(merged,{model, maxTokens:6000, signal}); return parseJsonLoose(again); }
+  catch(e){ const again=await callClaude(merged,{model, maxTokens:mt, onText:()=>{}, signal}); return parseJsonLoose(again); }
 }
 function aiErr(e){ const c=e&&e.code; return c==='unavailable'?'Add your Anthropic API key in ⚙️ Settings to turn on Claude features.'
   : c==='bad_key'?'Your Anthropic API key was rejected. Check it in ⚙️ Settings.'
@@ -1858,19 +1864,13 @@ let chMode={};
 function renderChapters(){
   const el=$('#v-chapters'), sel=curCh(), nums=chNums();
   const rows=MISSING_CH.filter(n=>!CH[n]).map(n=>`<tr><td>${n}</td><td class="muted">Not loaded yet (see “Add a chapter”)</td><td><span class="status">not loaded</span></td><td>–</td><td></td></tr>`)
-    .concat(nums.map(n=>{ const st=chStatus(n), cls=st==='done'?'done':st==='locked'?'lock':st==='in progress'?'prog':''; return `<tr><td>${n}</td><td>${escH(CH[n].t)}${CH[n].custom?'<span class="badge-ext">your notes</span>':''}</td><td><span class="status ${cls}">${st==='locked'?'🔒 locked':st}</span></td><td>${chMastery(n)}%</td><td><button class="mini" data-open="${n}" type="button">${n===sel.n?'Selected':'Open'}</button></td></tr>`; }));
+    .concat(nums.map(n=>{ const st=chStatus(n), cls=st==='done'?'done':st==='locked'?'lock':st==='in progress'?'prog':''; return `<tr><td>${n}</td><td>${escH(CH[n].t)}${CH[n].custom?'<span class="badge-ext">your notes</span>':CH[n].imported?'<span class="badge-ext">imported</span>':''}</td><td><span class="status ${cls}">${st==='locked'?'🔒 locked':st}</span></td><td>${chMastery(n)}%</td><td><button class="mini" data-open="${n}" type="button">${n===sel.n?'Selected':'Open'}</button></td></tr>`; }));
   el.innerHTML=`<div class="sect-h"><h2>Chapter map</h2></div><div class="tbl map"><table><tr><th>Ch</th><th>Title</th><th>Status</th><th>Mastery</th><th></th></tr>${rows.join('')}</table></div>
     <div id="ch-detail"></div>
     <div class="sect-h"><h2>Add a chapter</h2></div>
-    <div class="card"><p class="small muted" style="margin:0">Best: share the chapter zip with Claude in chat to get a full built-in lesson. Quick option: paste the chapter's key content here (vocabulary, grammar rules, examples) and Claude builds course-mode practice from it.</p>
-      <div class="row"><label class="small" for="add-n">Chapter</label><input class="inp" id="add-n" type="number" min="1" max="40" style="width:90px" value="${(nums[nums.length-1]||6)+1}"><input class="inp" id="add-t" type="text" placeholder="Title" style="flex:1;min-width:160px"></div>
-      <textarea class="inp" id="add-text" placeholder="Paste the chapter content…"></textarea>
-      <div class="row"><button class="btn solid" id="add-go" type="button">Add chapter</button></div></div>`;
+    ${importBox()}`;
   $$('[data-open]',el).forEach(b=>b.onclick=()=>{ S.current.ch=+b.dataset.open; save(); renderChapters(); $('#ch-detail').scrollIntoView({behavior:'smooth'}); });
-  $('#add-go').onclick=()=>{ const n=+$('#add-n').value, t=$('#add-t').value.trim(), text=$('#add-text').value.trim();
-    if(!n||!t||text.length<80) return toast('Add a number, a title and at least a paragraph of content.');
-    if(CH[n]&&!CH[n].custom) return toast(`Ch${n} is already built in.`);
-    S.custom[n]={t,text}; chState(n).unlocked=true; save(); loadCustomChapters(); S.current.ch=n; renderChapters(); toast(`Ch${n} added.`); };
+  wireImport();
   renderChDetail(sel.n);
 }
 function renderChDetail(n){
@@ -1897,8 +1897,11 @@ function renderChDetail(n){
       ${ch.clock?'<button class="act" data-a="clock" type="button"><b>🕐 Clock trainer</b><span>say and hear times</span></button>':''}
     </div>
     <div class="tefbox">🎯 <b>On the TEF:</b> ${ch.tef}</div>
+    ${ch.imported&&ch.checklist&&ch.checklist.length?`<details><summary class="small muted">Coverage checklist (${ch.checklist.length}) · from ${ch.files.length} files</summary><ul class="small">${ch.checklist.map(x=>'<li>'+escH(x)+'</li>').join('')}</ul></details>`:''}
+    ${ch.imported||ch.custom?`<div class="row"><button class="btn ghost" id="ch-del" type="button">Remove Ch${n}</button></div>`:''}
     ${ch.units.length?`<div class="sect-h"><h2>Lessons</h2></div><div class="units">${ch.units.map(u=>{ const its=u.q, m=its.length?Math.round(100*its.reduce((s,q)=>s+(S.cards[q.id]?Math.min(S.cards[q.id].b,3)/3:0),0)/its.length):0; return `<button class="unit ${c.units.includes(u.id)?'done':''}" data-u="${u.id}" type="button"><span class="ic">${u.ic}</span><span class="nm">${escH(u.t)}${u.src==='extended'?'<span class="badge-ext">beyond</span>':''}</span><span class="sb">${escH(u.sb||'')}</span><span style="display:grid;gap:4px"><span class="meter"><i style="width:${m}%"></i></span><span class="meta"><span>${m}% · ${its.length} cards</span><span>${c.units.includes(u.id)?'✓ done':''}</span></span></span></button>`; }).join('')}</div>`:''}
   </div>`;
+  if($('#ch-del')) $('#ch-del').onclick=function(){ if(!this.dataset.armed){ this.dataset.armed='1'; this.textContent='Tap again to remove Ch'+n+' and its progress'; return; } delete S.custom[n]; delete S.chapters[n]; Object.keys(S.cards).forEach(k=>{ if(k.startsWith('c'+n+'.')) delete S.cards[k]; }); save(); Object.keys(ITEM).forEach(k=>delete ITEM[k]); Object.keys(CH).forEach(k=>delete CH[k]); loadChapters(); loadCustomChapters(); loadGenerated(); S.current.ch=chNums()[0]; renderChapters(); toast('Ch'+n+' removed.'); };
   if($('#ch-unlock')) $('#ch-unlock').onclick=()=>{ c.unlocked=true; save(); renderChapters(); };
   $('#ch-next').onclick=()=>fl.run({back:'chapters'});
   $$('#ch-mode button').forEach(b=>b.onclick=()=>{ chMode[n]=b.dataset.m; S.current.mode=b.dataset.m; renderChDetail(n); });
@@ -2437,4 +2440,224 @@ $('#settings').insertAdjacentHTML('beforeend','<div id="settings2" style="flex-b
 renderSettings2();
 $('#gear').addEventListener('click',()=>{ if(!$('#settings').hidden) renderSettings2(); });
 if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')) navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+/* =====================================================================
+   COACH TEF · drag-and-drop chapter import (French with Alexa zips / PDFs)
+   ===================================================================== */
+const LIBS={ jszip:'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', pdf:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', pdfWorker:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' };
+const libLoads={};
+function loadLib(url){ return libLoads[url] || (libLoads[url]=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=url; s.onload=res; s.onerror=()=>{ delete libLoads[url]; rej({code:'network'}); }; document.head.appendChild(s); })); }
+
+/* ---------- 1. read the files ---------- */
+async function pdfText(buf){
+  await loadLib(LIBS.pdf); pdfjsLib.GlobalWorkerOptions.workerSrc=LIBS.pdfWorker;
+  const doc=await pdfjsLib.getDocument({data:buf}).promise; let out='';
+  for(let i=1;i<=doc.numPages;i++){ const pg=await doc.getPage(i), tc=await pg.getTextContent(); let lastY=null, line='';
+    tc.items.forEach(it=>{ const y=Math.round(it.transform[5]); if(lastY!==null && Math.abs(y-lastY)>2){ out+=line.trim()+'\n'; line=''; } line+=(line&&!line.endsWith(' ')&&!it.str.startsWith(' ')?' ':'')+it.str; lastY=y; });
+    out+=line.trim()+'\n\n'; }
+  return out.replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
+}
+function htmlText(src){
+  const d=new DOMParser().parseFromString(src,'text/html');
+  const code=[...d.querySelectorAll('script')].map(s=>s.textContent).join('\n').replace(/\s+/g,' ').slice(0,12000);
+  d.querySelectorAll('script,style,noscript').forEach(x=>x.remove());
+  const text=(d.body?d.body.innerText||d.body.textContent:'').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
+  return text+(code?'\n\nEXERCISE DATA (from the page\'s code, contains questions and answers):\n'+code:'');
+}
+const isJunk = n => /(^|\/)(__MACOSX|\.DS_Store)|\/\._/.test(n) || /^\._/.test(n.split('/').pop());
+async function readSources(files, onStatus){
+  const raw=[];
+  for(const f of files){
+    const name=f.name, low=name.toLowerCase();
+    if(low.endsWith('.zip')){ onStatus('Opening '+name+'…'); await loadLib(LIBS.jszip); const z=await JSZip.loadAsync(await f.arrayBuffer());
+      for(const e of Object.values(z.files)){ if(e.dir||isJunk(e.name)) continue; const l=e.name.toLowerCase();
+        if(l.endsWith('.pdf')) raw.push({name:e.name, kind:'pdf', get:()=>e.async('arraybuffer')});
+        else if(/\.html?$/.test(l)) raw.push({name:e.name, kind:'html', get:()=>e.async('string')});
+        else if(/\.(txt|md)$/.test(l)) raw.push({name:e.name, kind:'txt', get:()=>e.async('string')}); } }
+    else if(low.endsWith('.pdf')) raw.push({name, kind:'pdf', get:()=>f.arrayBuffer()});
+    else if(/\.html?$/.test(low)) raw.push({name, kind:'html', get:()=>f.text()});
+    else if(/\.(txt|md)$/.test(low)) raw.push({name, kind:'txt', get:()=>f.text()});
+  }
+  if(!raw.length) throw {code:'no_files'};
+  const out=[], seen=new Map();
+  for(let i=0;i<raw.length;i++){ const r=raw[i]; onStatus(`Reading ${i+1}/${raw.length}: ${r.name.split('/').pop()}`);
+    let text=''; try{ const data=await r.get(); text = r.kind==='pdf'?await pdfText(data) : r.kind==='html'?htmlText(data) : String(data); }catch(e){ out.push({name:r.name, kind:r.kind, text:'', error:true}); continue; }
+    const key=text.replace(/copyright\s*©?\s*\d{4}[^\n]*/gi,'').replace(/\s+/g,' ').trim();
+    if(!key){ out.push({name:r.name, kind:r.kind, text:'', error:true}); continue; }
+    if(seen.has(key)){ out.push({name:r.name, kind:r.kind, text:'', dupOf:seen.get(key)}); continue; }
+    seen.set(key, r.name); out.push({name:r.name, kind:r.kind, text}); }
+  return out;
+}
+function guessChapter(files){ for(const f of files){ const m=f.name.match(/chap\w*[\s_\-]*(\d{1,2})/i)||f.name.match(/lesson[\s_\-]*0?(\d{1,2})/i)||f.name.match(/\bch[\s_\-]*(\d{1,2})\b/i); if(m) return +m[1]; } return ''; }
+
+/* ---------- 2. Claude plans and builds the chapter ---------- */
+const ITEM_SHAPES_FULL = ITEM_SHAPES + `
+{"t":"ls","au":"French sentence that is read aloud","p":"What does it mean?","o":["English option 1","option 2","option 3"],"a":"the correct option, copied exactly","tag":"TAG","src":"course","cite":"…"}
+{"t":"sp","fr":"French sentence the learner READS ALOUD","en":"English","tag":"pronunciation","src":"course","cite":"…"}
+{"t":"match","pr":[["French","English"],["…","…"]],"tag":"vocabulary","src":"course","cite":"…"}   (4-5 pairs)
+{"t":"wb","p":"English sentence","a":"French sentence without final punctuation, words separated by single spaces","x":["2 distractor words"],"tag":"TAG","src":"course","cite":"…"}
+{"t":"conj","v":"infinitive","rows":[["je","form"],["tu","form"],["il / elle / on","form"],["nous","form"],["vous","form"],["ils / elles","form"]],"tag":"conjugation","src":"course","cite":"…"}   (use "j'" as the first pronoun when the form starts with a vowel)
+An mcq may also have "ctx":"a short French passage or dialogue the question is about".`;
+function validItemFull(x){
+  const v=validItem(x); if(v) { if(x.ctx&&typeof x.ctx==='string'&&v.t==='mcq') v.ctx=x.ctx.slice(0,1200); return v; }
+  if(!x||typeof x!=='object') return null;
+  const s=y=>typeof y==='string'&&y.trim();
+  if(x.t==='match'&&Array.isArray(x.pr)){ const pr=x.pr.filter(p=>Array.isArray(p)&&s(p[0])&&s(p[1])).slice(0,6); const ks=new Set(pr.map(p=>p[0])); if(pr.length>=3&&ks.size===pr.length) return {t:'match',pr}; return null; }
+  if(x.t==='wb'&&s(x.p)&&s(x.a)){ const a=x.a.replace(/[.!?]\s*$/,'').replace(/\s+/g,' ').trim(); if(a.split(' ').length<2||a.split(' ').length>14) return null; return {t:'wb',p:x.p,a,x:Array.isArray(x.x)?x.x.filter(s).slice(0,3):[]}; }
+  if(x.t==='conj'&&s(x.v)&&Array.isArray(x.rows)){ const rows=x.rows.filter(r=>Array.isArray(r)&&s(r[0])&&s(r[1])).slice(0,8); if(rows.length>=3) return {t:'conj',v:x.v,rows}; }
+  return null;
+}
+function sourcesBlock(srcs, names, max){
+  const use = names&&names.length ? srcs.filter(s=>names.some(n=>s.name.includes(n)||n.includes(s.name.split('/').pop()))) : srcs;
+  const list = (use.length?use:srcs).filter(s=>s.text);
+  let out='', per=Math.max(2500, Math.floor(max/Math.max(1,list.length)));
+  list.forEach(s=>{ out+=`\n===== FILE: ${s.name.split('/').pop()} =====\n${s.text.slice(0,per)}\n`; });
+  return out.slice(0,max);
+}
+async function planChapter(n, srcs, signal){
+  const prompt=`You turn a "French with Alexa" course chapter into an interactive lesson plan for a tutoring app.
+${learnerCtx()}
+CHAPTER ${n}. Below are ALL the files from the chapter (support-guide PDFs, worksheets, exercise pages).
+Make a plan that covers EVERYTHING important: every grammar point and rule, every vocabulary list, every dialogue or text, every pronunciation point, and every worksheet/exercise item (with its answer key). Keep the course's order. Group into 4–10 units of one topic each (a worksheet goes with its topic's unit).
+Reply with only JSON:
+{"title":"short French chapter title","sb":"one line in English listing the topics","tef":"2–3 sentences: where this chapter's content appears in the TEF Canada exam (compréhension orale/écrite, expression orale/écrite, sections A/B) and what tasks use it","scen":["3 short role-play scenarios using ONLY this chapter's language"],"wr":["one course writing task, 40–80 words, using this chapter's language"],
+"checklist":["every important item in the chapter, one short line each (aim for 15–40 lines)"],
+"units":[{"id":"short-slug","t":"unit title","ic":"one emoji","sb":"what it covers in a few words","tip":"the key rule in one or two sentences, in English with French examples","tag":"main error type: one of ${TAGS.join('|')}","files":["file names this unit draws from"],"covers":["checklist lines this unit covers"]}]}
+FILES:${sourcesBlock(srcs,null,90000)}`;
+  const r=await ask(prompt,{json:true, signal, maxTokens:8000});
+  if(!r||!Array.isArray(r.units)||!r.units.length) throw {code:'invalid_json'};
+  r.units=r.units.filter(u=>u&&u.t).slice(0,12).map((u,i)=>({...u, id:String(u.id||'u'+(i+1)).toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,24)||'u'+(i+1)}));
+  const ids=new Set(); r.units.forEach((u,i)=>{ if(ids.has(u.id)) u.id+='-'+i; ids.add(u.id); });
+  return r;
+}
+async function buildUnit(n, plan, u, srcs, signal){
+  const prompt=`You build ONE unit of an interactive French lesson from a "French with Alexa" course chapter.
+${learnerCtx()}
+CHAPTER ${n}: ${plan.title}. UNIT: "${u.t}" (${u.sb||''}). It must cover: ${(u.covers||[]).join('; ')||u.sb}.
+COURSE MODE: use ONLY vocabulary, grammar, examples and phrasing found in the files below. Copy the course's own examples and every worksheet item that belongs to this unit (use its answer key). Do not invent material from outside the chapter. Every item: "src":"course" and a short "cite" naming the file or section.
+Reply with only JSON:
+{"learn":{"intro":"1–2 sentences in English","sections":[{"h":"heading","p":"short explanation in English","head":["column 1","column 2"],"table":[["French","English","optional pronunciation respelling"]],"examples":[["French sentence","English"]],"dialogue":[["Speaker","French line","English"]],"note":"a memory tip, a trap or a pronunciation point (liaison, silent letter, nasal)"}]},
+ "vocab":[{"fr":"French word or phrase","en":"English","pron":"respelling"}],
+ "q":[14–22 practice items in a pedagogical order: recognition first (match, mcq, ls), then production (fill, wb, tr, conj, lt), then speaking (sp, sy)]}
+Omit any section field you don't need. Put every word list from this unit in "vocab".
+${ITEM_SHAPES_FULL}
+FILES:${sourcesBlock(srcs,u.files,45000)}`;
+  const r=await ask(prompt,{json:true, signal, maxTokens:12000});
+  const q=(r&&Array.isArray(r.q)?r.q:[]).map(x=>{ const v=validItemFull(x); if(!v) return null; v.tag=TAGS.includes(x.tag)?x.tag:(v.t==='sp'?'pronunciation':v.t==='lt'?'spelling':(TAGS.includes(u.tag)?u.tag:'vocabulary')); if(typeof x.cite==='string') v.cite=x.cite.slice(0,60); return v; }).filter(Boolean);
+  if(q.length<4) throw {code:'invalid_json'};
+  const L=r.learn&&typeof r.learn==='object'?r.learn:{sections:[]};
+  const vocab=(Array.isArray(r.vocab)?r.vocab:[]).filter(v=>v&&typeof v.fr==='string'&&typeof v.en==='string').slice(0,80).map(v=>({fr:v.fr,en:v.en,pron:typeof v.pron==='string'?v.pron:''}));
+  return {id:u.id, ic:typeof u.ic==='string'?u.ic.slice(0,4):'📘', t:u.t, sb:u.sb||'', tip:u.tip||'', tag:TAGS.includes(u.tag)?u.tag:'vocabulary', L, q, vocab};
+}
+function renderLearn(u){
+  const L=u.L||{}, str=v=>typeof v==='string'?v:'';
+  return `<h3>${escH(u.t)}</h3>`+(str(L.intro)?`<p>${escH(L.intro)}</p>`:'')+
+    (Array.isArray(L.sections)?L.sections:[]).map(s=>{ if(!s||typeof s!=='object') return '';
+      const tbl=Array.isArray(s.table)?s.table.filter(r=>Array.isArray(r)&&r[0]).map(r=>[String(r[0]),String(r[1]||''),r[2]?String(r[2]):'']):[];
+      const ex=Array.isArray(s.examples)?s.examples.filter(r=>Array.isArray(r)&&r[0]).map(r=>[String(r[0]),String(r[1]||'')]):[];
+      const dl=Array.isArray(s.dialogue)?s.dialogue.filter(r=>Array.isArray(r)&&r[1]):[];
+      return (str(s.h)?`<h4>${escH(s.h)}</h4>`:'')+(str(s.p)?`<p>${escH(s.p)}</p>`:'')+
+        (tbl.length?T(tbl, Array.isArray(s.head)&&s.head.length===2?s.head.map(escH):undefined):'')+(ex.length?EX(ex):'')+
+        (dl.length?`<div class="row"><button class="btn ghost" data-dialogue type="button">▶ Play the dialogue</button><button class="btn ghost" data-toggle-en type="button">Hide English</button></div><div class="dialogue">${dl.map(([w,f,e])=>`<div class="ln"><span class="who">${escH(String(w||''))}</span><span>${F(String(f))}<span class="en">${escH(String(e||''))}</span></span></div>`).join('')}</div>`:'')+
+        (str(s.note)?`<div class="note">${escH(s.note)}</div>`:''); }).join('')+REP();
+}
+
+/* ---------- 3. register imported chapters like built-in ones ---------- */
+function loadCustomChapters(){
+  Object.entries(S.custom||{}).forEach(([n,c])=>{ n=+n; if(CH[n]&&!CH[n].custom&&!CH[n].imported) return;
+    if(!c.built){ loadCustomChaptersNotes(n,c); return; }
+    const units=c.units.map(u=>({id:u.id, ic:u.ic, t:u.t, sb:u.sb, tip:u.tip, tag:u.tag, src:'course', ch:n, q:u.q.map(x=>({...x})), learn:()=>renderLearn(u)}));
+    units.forEach(u=>u.q.forEach((q,i)=>{ q.id=`c${n}.${u.id}.${i}`; q.ch=n; q.u=u; q.uid=u.id; q.cite=q.cite||u.t; q.src='course'; q.tag=TAGS.includes(q.tag)?q.tag:u.tag; registerItem(q); }));
+    const seen=new Set(), cards=[];
+    c.units.forEach(u=>(u.vocab||[]).forEach(v=>{ const k=v.fr+'|'+v.en; if(seen.has(k)) return; seen.add(k); cards.push(registerItem({id:`c${n}.fc.${cards.length}`, t:'fc', fr:v.fr, en:v.en, pron:v.pron, ch:n, src:'course', tag:'vocabulary', cite:'Vocabulary'})); }));
+    CH[n]={n, t:c.t, sb:c.sb||'', units, cards, custom:false, imported:true, tef:escH(c.tef||''), scen:(c.scen&&c.scen.length?c.scen:['A short conversation using this chapter']).slice(0,4), wr:(c.wr&&c.wr.length?c.wr:['Write 60–80 words using this chapter\'s vocabulary and grammar.']), checklist:c.checklist||[], files:c.files||[]};
+  });
+}
+
+/* ---------- 4. the import screen ---------- */
+let IMP=null;
+function importBox(){
+  return `<div class="card" id="imp-card"><div class="kicker">Add a chapter</div>
+    <div class="dropzone" id="imp-drop" tabindex="0" role="button" aria-label="Choose chapter files">
+      <div class="big">📦 Drop a French with Alexa chapter here</div>
+      <div class="small muted">The chapter's zip, or its PDFs and exercise pages. Tap to choose files.</div>
+      <input type="file" id="imp-file" accept=".zip,.pdf,.html,.htm,.txt,application/zip,application/pdf,text/html" multiple hidden>
+    </div>
+    <div id="imp-sel"></div>
+    <details><summary class="small muted">Or paste text instead</summary>
+      <div class="row"><label class="small" for="add-n">Chapter</label><input class="inp" id="add-n" type="number" min="1" max="40" style="width:90px"><input class="inp" id="add-t" type="text" placeholder="Title" style="flex:1;min-width:160px"></div>
+      <textarea class="inp" id="add-text" placeholder="Paste the chapter content…"></textarea>
+      <div class="row"><button class="btn ghost" id="add-go" type="button">Add from text</button></div></details></div>`;
+}
+function wireImport(){
+  const dz=$('#imp-drop'), fi=$('#imp-file'); if(!dz) return;
+  dz.onclick=()=>fi.click(); dz.onkeydown=e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); fi.click(); } };
+  ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); dz.classList.add('over'); }));
+  ['dragleave','drop'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); dz.classList.remove('over'); }));
+  dz.addEventListener('drop',e=>{ const fs=[...(e.dataTransfer&&e.dataTransfer.files||[])]; if(fs.length) pickFiles(fs); });
+  fi.onchange=()=>{ const fs=[...fi.files]; fi.value=''; if(fs.length) pickFiles(fs); };
+  const nums=chNums(); if($('#add-n')) $('#add-n').value=(nums[nums.length-1]||6)+1;
+  if($('#add-go')) $('#add-go').onclick=()=>{ const n=+$('#add-n').value, t=$('#add-t').value.trim(), text=$('#add-text').value.trim();
+    if(!n||!t||text.length<80) return toast('Add a number, a title and at least a paragraph of content.');
+    if(CH[n]&&!CH[n].custom) return toast(`Ch${n} already exists.`);
+    S.custom[n]={t,text}; chState(n).unlocked=true; save(); loadCustomChapters(); S.current.ch=n; renderChapters(); toast(`Ch${n} added.`); };
+}
+function pickFiles(files){
+  const g=guessChapter(files), nums=chNums(), def=g||((nums[nums.length-1]||6)+1);
+  $('#imp-sel').innerHTML=`<div class="row" style="margin-top:10px"><span class="small"><b>${files.length} file${files.length>1?'s':''}:</b> ${escH(files.map(f=>f.name).join(', ').slice(0,160))}</span></div>
+    <div class="row"><label class="small" for="imp-n">Chapter number</label><input class="inp" id="imp-n" type="number" min="1" max="60" value="${def}" style="width:90px">
+    <button class="btn solid big" id="imp-go" type="button">Build the lesson ▶</button></div>
+    <p class="small muted" style="margin:0">Claude reads every file and builds the full lesson. Usually 3–8 minutes, using your API key. Keep the app open.</p>`;
+  $('#imp-go').onclick=()=>{ const n=+$('#imp-n').value; if(!n) return toast('Enter the chapter number.');
+    if(CH[n]&&!CH[n].custom&&!CH[n].imported) return toast(`Ch${n} is already built in.`);
+    if(!aiOn()) return openSettings('set-key');
+    runImport(files, n); };
+}
+function impRender(){
+  const el=$('#v-task'); if(!IMP) return;
+  const st=IMP.steps.map(s=>`<li class="${s.state}">${s.state==='ok'?'✅':s.state==='err'?'⚠️':s.state==='run'?'⏳':'○'} ${escH(s.label)}${s.note?` <span class="small muted">${escH(s.note)}</span>`:''}</li>`).join('');
+  el.innerHTML=`<div class="lesson-top"><button class="x" id="imp-x" type="button" aria-label="Stop">×</button><div class="small muted" style="flex:1">Importing Chapter ${IMP.n}</div></div>
+    <div class="card"><div class="kicker">Building Chapter ${IMP.n}${IMP.plan?' · '+escH(IMP.plan.title):''}</div>
+    <div class="prompt" style="font-size:20px">${escH(IMP.status)}</div>
+    <ul class="implog">${st}</ul>
+    ${IMP.files?`<details><summary class="small muted">Files read (${IMP.files.length})</summary><ul class="small">${IMP.files.map(f=>`<li>${escH(f.name.split('/').pop())}${f.dupOf?' · duplicate, skipped':f.error?' · could not read':' · '+f.text.length.toLocaleString()+' characters'}</li>`).join('')}</ul></details>`:''}
+    ${IMP.done?IMP.done:''}</div>`;
+  $('#imp-x').onclick=()=>{ if(IMP.running&&IMP.ctl) IMP.ctl.abort(); IMP=null; showView('chapters'); };
+}
+async function runImport(files, n){
+  IMP={n, steps:[], status:'Reading the files…', running:true, ctl:new AbortController()};
+  showView('task'); impRender();
+  const step=(label)=>{ const s={label, state:'run'}; IMP.steps.push(s); impRender(); return s; };
+  try{
+    const s1=step('Read every PDF and exercise file');
+    IMP.files=await readSources(files, m=>{ IMP.status=m; impRender(); });
+    const used=IMP.files.filter(f=>f.text); if(!used.length) throw {code:'no_text'};
+    s1.state='ok'; s1.note=`${used.length} files, ${IMP.files.filter(f=>f.dupOf).length} duplicates skipped`;
+    const s2=step('Plan the units and the coverage checklist'); IMP.status='Claude is reading the whole chapter and planning the units…'; impRender();
+    const plan=await planChapter(n, used, IMP.ctl.signal); IMP.plan=plan; s2.state='ok'; s2.note=`${plan.units.length} units, ${(plan.checklist||[]).length} checklist items`;
+    const built=new Array(plan.units.length), ust=plan.units.map(u=>({label:`Build unit: ${u.ic||''} ${u.t}`, state:'wait'})); IMP.steps.push(...ust); impRender();
+    let next=0, failed=[];
+    const worker=async()=>{ while(next<plan.units.length){ const i=next++; ust[i].state='run'; IMP.status=`Building units… (${built.filter(Boolean).length}/${plan.units.length} done)`; impRender();
+      for(let attempt=0;attempt<2&&!built[i];attempt++){ try{ built[i]=await buildUnit(n, plan, plan.units[i], used, IMP.ctl.signal); }catch(e){ if(e&&e.code==='cancelled') throw e; if(['bad_key','no_credit','network'].includes(e&&e.code)) throw e; } }
+      ust[i].state=built[i]?'ok':'err'; ust[i].note=built[i]?`${built[i].q.length} questions, ${built[i].vocab.length} words`:'failed, try again later'; if(!built[i]) failed.push(i);
+      IMP.status=`Building units… (${built.filter(Boolean).length}/${plan.units.length} done)`; impRender(); } };
+    await Promise.all([worker(),worker(),worker()]);
+    const units=built.filter(Boolean); if(!units.length) throw {code:'invalid_json'};
+    S.custom[n]={built:true, t:plan.title||('Chapitre '+n), sb:plan.sb||'', tef:plan.tef||'', scen:plan.scen||[], wr:plan.wr||[], checklist:plan.checklist||[], files:used.map(f=>f.name.split('/').pop()), units:units.map(u=>({id:u.id, ic:u.ic, t:u.t, sb:u.sb, tip:u.tip, tag:u.tag, L:u.L, q:u.q.map(({u:_,...rest})=>rest), vocab:u.vocab})), at:Date.now()};
+    const st=chState(n); st.unlocked=true; st.units=[]; st.done=false; st.check=0; S.current.ch=n;
+    save(); Object.keys(ITEM).forEach(k=>delete ITEM[k]); Object.keys(CH).forEach(k=>delete CH[k]); loadChapters(); loadCustomChapters(); loadGenerated();
+    const nq=units.reduce((a,u)=>a+u.q.length,0), nv=CH[n].cards.length;
+    IMP.running=false; IMP.status=failed.length?`Chapter ${n} is ready, but ${failed.length} unit${failed.length>1?'s':''} failed.`:`Chapter ${n} is ready.`;
+    IMP.done=`<div class="levels"><div><span>Units</span><b>${units.length}</b></div><div><span>Questions</span><b>${nq}</b></div><div><span>Flashcards</span><b>${nv}</b></div><div><span>Files used</span><b>${used.length}</b></div></div>
+      ${failed.length?`<div class="banner"><span>Not built: ${failed.map(i=>escH(plan.units[i].t)).join(', ')}. Drop the zip again to rebuild the whole chapter.</span></div>`:''}
+      <details open><summary><b>Coverage checklist</b> <span class="small muted">everything Claude found in the chapter</span></summary><ul class="small">${(plan.checklist||[]).map(c=>`<li>${escH(c)}</li>`).join('')}</ul></details>
+      <div class="row"><button class="btn solid big" id="imp-open" type="button">Open Chapter ${n} ▶</button></div>`;
+    impRender(); $('#imp-open').onclick=()=>{ IMP=null; showView('chapters'); setTimeout(()=>$('#ch-detail')&&$('#ch-detail').scrollIntoView({behavior:'smooth'}),60); };
+    sfx('win'); confetti();
+  }catch(e){
+    if(!IMP) return; IMP.running=false; const last=IMP.steps.find(s=>s.state==='run'); if(last) last.state='err';
+    IMP.status = e&&e.code==='no_files' ? 'No PDFs or exercise pages found. Drop the chapter zip or its PDF files.' : e&&e.code==='no_text' ? 'Couldn\'t read any text from those files (they may be scanned images).' : aiErr(e);
+    IMP.done='<div class="row"><button class="btn ghost" type="button" data-go="chapters">Back to Chapitres</button></div>'; impRender();
+  }
+}
 </script></body></html>
