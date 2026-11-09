@@ -910,16 +910,34 @@ function loadVoices(){
   const saved=store.get('c6-voice',null), idx=voices.findIndex(v=>v.name===saved);
   sel.value = idx>=0?idx:0; voice=voices[sel.value];
 }
-let speakToken=0;
+let speakToken=0, ttsKeep=[], ttsFails=0;
+function frLocalVoice(){ return voices.find(v=>v.localService&&v.lang==='fr-FR')||voices.find(v=>v.localService)||null; }
 function speak(text, o={}){
   if(!synth||!text){ o.onend&&o.onend(); return; }
+  try{ if(activeRec){ activeRec.abort(); } }catch(e){}
+  const busy = synth.speaking||synth.pending;
   if(!o.queue) synth.cancel();
   const tok=++speakToken;
-  const u=new SpeechSynthesisUtterance(String(text).replace(/___/g,'…'));
-  u.lang = voice?voice.lang:'fr-FR'; if(voice) u.voice=voice; u.rate = o.rate || 0.95;
-  if(o.el) o.el.classList.add('on');
-  u.onend = u.onerror = ()=>{ o.el&&o.el.classList.remove('on'); o.onend && o.onend(tok); };
-  synth.speak(u);
+  const go=(v,retry)=>{
+    if(tok!==speakToken && !o.queue) return;
+    const u=new SpeechSynthesisUtterance(String(text).replace(/___/g,'…'));
+    u.lang = v?v.lang:'fr-FR'; if(v) try{ u.voice=v; }catch(e){} u.rate = o.rate || 0.95;
+    let started=false, done=false;
+    ttsKeep.push(u); if(ttsKeep.length>20) ttsKeep.shift();          // Chrome drops utterances that get garbage-collected
+    if(o.el) o.el.classList.add('on');
+    const fin=()=>{ if(done) return; done=true; o.el&&o.el.classList.remove('on'); o.onend && o.onend(tok); };
+    u.onstart=()=>{ started=true; ttsFails=0; };
+    u.onend=fin;
+    u.onerror=e=>{ micNote&&micNote('voice error: '+(e&&e.error)); if(!started&&!retry&&e&&e.error!=='interrupted'&&e.error!=='canceled'){ synth.cancel(); go(frLocalVoice()||null,true); } else fin(); };
+    try{ synth.resume(); }catch(e){}
+    synth.speak(u);
+    setTimeout(()=>{                                                 // nothing came out: retry once with a voice that lives on this device
+      if(started||done||tok!==speakToken) return;
+      if(!retry){ micNote&&micNote('voice silent, retrying'); synth.cancel(); go(frLocalVoice()||null,true); }
+      else { ttsFails++; micNote&&micNote('voice failed twice'); toast(ttsFails>1?'🔇 The French voice isn\'t playing. Check your volume and sound output, then reload the app.':'🔇 No sound came out. Tap 🔊 again.'); fin(); }
+    }, 2500);
+  };
+  if(busy && !o.queue) setTimeout(()=>go(voice,false),80); else go(voice,false);   // Chrome silently drops a speak() right after cancel()
   return tok;
 }
 let seqStop=null;
@@ -970,37 +988,66 @@ function micMsg(k){
     case 'unsupported': return 'This browser can\'t do speech recognition. Use Chrome on your Mac or Safari on iPhone, or the keyboard\'s 🎤 dictation in the box.';
     case 'language-not-supported': return 'French speech recognition isn\'t available in this browser. Use Chrome, or add French to your keyboard\'s dictation languages.';
     case 'busy': return 'Still finishing the last recording. Tap 🎤 again in a second.';
+    case 'prompt': return IS_IOS ? 'Allow the microphone when your iPhone asks, then tap 🎤 again.' : 'Your browser is asking for microphone permission: click Allow (top of the window, next to the address bar), then tap 🎤 again.';
+    case 'nostart': return IS_IOS ? 'The mic didn\'t start. Close other apps using the mic, then tap 🎤 again. If it keeps happening, swipe the app closed and reopen it.' : 'Chrome\'s speech service didn\'t start. Tap 🎤 again. If it keeps happening, quit Chrome completely (⌘Q) and reopen the app.';
     default: return 'The mic stopped unexpectedly ('+k+'). Tap 🎤 to try again.';
   }
 }
 function micStateText(){ return !SRC ? micMsg('unsupported') : micOK ? '🎤 Microphone ready. Tap a 🎤 button and allow access when asked.' : micMsg('blocked'); }
-let micEnding=false;
-function listen(h){
-  if(activeRec){ micEnding=true; setTimeout(()=>{ micEnding=false; },2500); try{ activeRec.stop(); }catch(e){} return null; }   // tapping again stops and grades what was said
-  if(micEnding){ h.error('busy'); return null; }
+let micEnding=false, micGen=0, micStarted=false, micStartAt=0, micPerm='unknown';
+try{ navigator.permissions&&navigator.permissions.query({name:'microphone'}).then(p=>{ micPerm=p.state; p.onchange=()=>{ micPerm=p.state; micNote('mic permission: '+p.state); }; }).catch(()=>{}); }catch(e){}
+function resetMic(){   // forget any recording, even one the browser never finished
+  micGen++; const r=activeRec; activeRec=null; micEnding=false; micStarted=false;
+  if(r) try{ r.abort(); }catch(e){}
+}
+function listen(h, retried){
+  if(activeRec){
+    if(micStarted){ micEnding=true; setTimeout(()=>{ micEnding=false; },1500); try{ activeRec.stop(); }catch(e){ resetMic(); } return null; }   // tapping again stops and grades what was said
+    micNote('stale recorder reset'); resetMic();                     // a recorder that never started: throw it away and start fresh
+  }
+  if(micEnding) micEnding=false;
   if(!SRC){ h.error('unsupported'); return null; }
+  if(micPerm==='denied'){ micOK=false; h.error('blocked'); return null; }
+  if(synth&&(synth.speaking||synth.pending)) synth.cancel();
   let rec; try{ rec=new SRC(); }catch(e){ h.error('unsupported'); return null; }
+  const gen=++micGen;
   rec.lang='fr-FR'; rec.interimResults=true; rec.maxAlternatives=5; rec.continuous=!(IS_IOS||IS_SAFARI);   // Chrome: keep listening through pauses
-  let finals=null, interim='', errored=false, ended=false, silenceT=null, hardT=null;
+  let finals=null, interim='', errored=false, ended=false, silenceT=null, hardT=null, startT=null;
+  const mine=()=>gen===micGen;
   const stopIn=ms=>{ clearTimeout(silenceT); silenceT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, ms); };
-  rec.onstart=()=>{ micOK=true; micNote('listening'); h.start&&h.start(); hardT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, 25000); };
-  rec.onresult=e=>{
+  const finish=()=>{ clearTimeout(silenceT); clearTimeout(hardT); clearTimeout(startT); if(ended) return false; ended=true; if(mine()){ activeRec=null; micStarted=false; micEnding=false; } h.end&&h.end(); return true; };
+  rec.onstart=()=>{ if(!mine()) return; clearTimeout(startT); micStarted=true; micOK=true; micNote('listening'); h.start&&h.start(); hardT=setTimeout(()=>{ try{ rec.stop(); }catch(e){} }, 30000); };
+  rec.onaudiostart=()=>micNote('audio on');
+  rec.onresult=e=>{ if(!mine()) return;
     const res=[...e.results], txt=res.map(r=>r[0].transcript).join(' ').replace(/\s+/g,' ').trim();
     interim=txt; h.interim&&h.interim(txt);
     const last=res[res.length-1];
     if(last.isFinal){ const before=res.slice(0,-1).map(r=>r[0].transcript).join(' ');
       finals=[txt, ...[...last].slice(1).map(a=>(before+' '+a.transcript).replace(/\s+/g,' ').trim())]; stopIn(rec.continuous ? 2600 : 300); }
-    else stopIn(IS_IOS||IS_SAFARI ? 1800 : 3000);   // pauses are fine: stop only after a longer silence, or when you tap 🎤   // Safari often never marks results final: stop after a short silence
+    else stopIn(IS_IOS||IS_SAFARI ? 1800 : 3000);   // pauses are fine: stop only after a longer silence, or when you tap 🎤
   };
-  rec.onerror=e=>{ const c=e.error||'unknown'; micNote('error: '+c); if(c==='aborted') return; errored=true;
-    if(c==='not-allowed'||c==='service-not-allowed'){ micOK=false; const ms=$('#mic-state'); if(ms) ms.textContent=micStateText(); h.error('blocked'); }
-    else if(c==='no-speech') h.error('nospeech'); else h.error(c); };
-  rec.onend=()=>{ clearTimeout(silenceT); clearTimeout(hardT); micEnding=false; if(ended) return; ended=true; activeRec=null; h.end&&h.end();
+  rec.onerror=e=>{ const c=e.error||'unknown'; micNote('error: '+c); if(!mine()||c==='aborted') return; errored=true;
+    if(c==='not-allowed'||c==='service-not-allowed'){ micOK=false; const ms=$('#mic-state'); if(ms) ms.textContent=micStateText(); finish(); h.error('blocked'); }
+    else if(c==='no-speech'){ finish(); h.error('nospeech'); } else { finish(); h.error(c); } };
+  rec.onend=()=>{ if(!mine()){ return; } if(!finish()) return;
     const got = finals&&finals.length ? finals.filter(Boolean) : (interim ? [interim] : null);
     micNote('heard: '+(got?'«'+got[0]+'»':'nothing'));
     if(got&&got.length) h.final(got); else if(!errored) h.error('nospeech'); };
-  synth&&synth.cancel(); activeRec=rec;
-  try{ rec.start(); }catch(e){ activeRec=null; micNote('start failed: '+(e&&e.message)); h.error(e&&/not.?allowed/i.test(e.name||'')?'blocked':'busy'); return null; }
+  activeRec=rec; micStarted=false; micStartAt=Date.now();
+  // watchdog: the browser accepted start() but never began listening (waiting on a permission prompt, or its speech service hung)
+  let waited=false;
+  const watch=()=>{ if(!mine()||micStarted||ended) return;
+    if(micPerm==='prompt' && !waited){ waited=true; micNote('waiting for permission'); h.note&&h.note(micMsg('prompt')); startT=setTimeout(watch,20000); return; }   // keep waiting while you click Allow
+    micNote('mic did not start ('+micPerm+')'); resetMic(); ended=true; h.end&&h.end();
+    if(micPerm==='prompt'){ h.error('prompt'); return; }
+    if(!retried){ micNote('retrying mic'); setTimeout(()=>listen(h,true),300); return; }
+    h.error('nostart'); };
+  startT=setTimeout(watch,3500);
+  try{ rec.start(); micNote('start requested'); }
+  catch(e){ micNote('start failed: '+(e&&e.name)+' '+(e&&e.message)); resetMic(); clearTimeout(startT);
+    if(e&&/not.?allowed/i.test(e.name||'')){ h.error('blocked'); return null; }
+    if(!retried){ setTimeout(()=>listen(h,true),400); return null; }
+    h.error('nostart'); return null; }
   return rec;
 }
 
@@ -1185,7 +1232,7 @@ function speakCard(q, card, api, {targets, show, en, k, onGrade, sayAns}){
     $('#sp-heard',card).innerHTML=`<div class="heard ${r.ok?'ok':'no'}"><div class="line">${r.html}</div><div class="meta">I heard: «${escH(r.heard)}»${r.pct!=null?' · '+r.pct+'% match':''}</div>${r.extra||''}</div>`;
     api.result(r.ok,{ans:r.ans, say:sayAns(), title:r.ok?null:'Almost. Listen and try again', note:r.note, retry:()=>{ $('#sp-heard',card).innerHTML=''; inp.value=''; start(); }});
   }
-  function start(){ listen({ start(){ mic.classList.add('live'); st.textContent='Listening… speak now. Tap the mic again when you\'re done.'; }, interim(t){ st.textContent='… '+t; },
+  function start(){ st.textContent='Starting the mic…'; mic.classList.add('live'); listen({ note(t){ st.textContent=t; }, start(){ mic.classList.add('live'); st.textContent='Listening… speak now. Tap the mic again when you\'re done.'; }, interim(t){ st.textContent='… '+t; },
       final(alts){ inp.value=alts[0]; inp._alts=alts; st.textContent='This is what I heard. Fix it if needed, then tap Check. Tap 🎤 to say it again.'; $('#sp-ok',card).classList.add('solid'); }, end(){ mic.classList.remove('live'); },
       error(kk){ mic.classList.remove('live'); if(kk==='blocked'){ $('#sp-dict',card).classList.add('show'); st.textContent=micMsg(kk); inp.focus(); } else st.textContent = micMsg(kk); } }); }
   mic.onclick=start;
@@ -1672,6 +1719,7 @@ function srcLine(q){
   return '';
 }
 function renderQ(){
+  try{ resetMic(); }catch(e){}
   if(!LS) return;
   const entry=LS.queue[0]; if(!entry) return endLesson();
   LS.answered=false; const q=entry.q;
