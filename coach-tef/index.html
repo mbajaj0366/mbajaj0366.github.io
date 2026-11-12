@@ -1200,7 +1200,8 @@ R.wb=(q,card,api)=>{
   function draw(){ slot.innerHTML=''; chosen.forEach((i,pos)=>{ const b=document.createElement('button'); b.type='button'; b.className='chip'; b.textContent=words[i]; b.onclick=()=>{ if(LS.answered) return; chosen.splice(pos,1); chips[i].classList.remove('used'); draw(); }; slot.append(b); });
     chosen.length? api.ready(chk): api.unready(); }
   function chk(){ if(LS.answered) return; const got=chosen.map(i=>words[i]).join(' '); const ok=keyOf(got)===keyOf(q.a);
-    api.result(ok,{ans:q.a+'.', say:q.a, ansHtml:ok?null:escH(q.a)+'.'}); }
+    const d=ok?null:wbDiagnose(chosen.map(i=>words[i]), target);
+    api.result(ok,{ans:q.a+'.', say:q.a, ansHtml:ok?null:(d?d.ansHtml:escH(q.a)+'.'), tag:d&&d.tag, note:d&&d.note}); }
 };
 R.match=(q,card,api)=>{
   card.innerHTML = kick('Match the pairs') + `<div class="prompt" style="font-size:18px">Tap a French word, then its meaning.</div><div class="match"><div class="col" id="m-fr"></div><div class="col" id="m-en"></div></div>`;
@@ -1298,6 +1299,38 @@ R.clkL=(q,card,api)=>{
     api.result(ok,{ans:canon+' = '+right, say:canon}); }
 };
 
+
+const WB_GENDER=[['un','une'],['le','la'],['mon','ma'],['ton','ta'],['son','sa'],['ce','cette'],['cet','cette'],['du','de la'],['il','elle'],['ils','elles'],['au','à la']];
+const WB_VERBS=[['ai','as','a','avons','avez','ont'],['suis','es','est','sommes','êtes','sont'],['vais','vas','va','allons','allez','vont'],['fais','fait','faisons','faites','font']].map(r=>r.map(w=>keyOf(w)));
+function wbVerbPair(e,m){ if(WB_VERBS.some(r=>r.includes(e)&&r.includes(m))) return true;
+  const end=/(e|es|ons|ez|ent|is|it|issons|issez|issent)$/; if(!end.test(e)||!end.test(m)) return false;
+  const st=w=>w.replace(/(issons|issez|issent|ons|ez|ent|es|e|is|it)$/,''); return st(e).length>=3 && st(e)===st(m); }
+function wbDiagnose(gotW, target){
+  const k=w=>keyOf(w), gk=gotW.map(k), tk=target.map(k);
+  const same = gk.slice().sort().join('|')===tk.slice().sort().join('|');
+  const mark=bad=>target.map(w=>bad.has(k(w))?`<u>${escH(w)}</u>`:escH(w)).join(' ')+'.';
+  if(same) return {tag:'word order', note:'Right words, wrong order. Compare your sentence with the answer.', ansHtml:escH(target.join(' '))+'.'};
+  // words you used that aren't in the answer, and answer words you left out
+  const extra=gk.slice(), miss=[]; tk.forEach(w=>{ const i=extra.indexOf(w); if(i>=0) extra.splice(i,1); else miss.push(w); });
+  const pairs=[]; const left=miss.slice();
+  extra.forEach(e=>{ let j=left.findIndex(m=>WB_GENDER.some(([a,b])=>(a===e&&b===m)||(b===e&&a===m)));
+    if(j<0) j=left.findIndex(m=>m.replace(/e?s?$/,'')===e.replace(/e?s?$/,'')&&m!==e);
+    if(j<0) j=left.findIndex(m=>wbVerbPair(e,m));
+    if(j<0 && extra.length===1 && left.length===1) j=0;
+    if(j>=0){ pairs.push([e,left[j]]); left.splice(j,1); } else pairs.push([e,null]); });
+  const disp=w=>{ const t=target.find(x=>k(x)===w)||gotW.find(x=>k(x)===w)||w; return escH(t); };
+  const isArt=([e,m])=>m&&WB_GENDER.some(([a,b])=>(a===e&&b===m)||(b===e&&a===m));
+  const isVerb=([e,m])=>m&&wbVerbPair(e,m);
+  const isAgr=([e,m])=>m&&!isArt([e,m])&&!isVerb([e,m])&&m.replace(/e?s?$/,'')===e.replace(/e?s?$/,'');
+  const tag = pairs.some(isArt) ? 'gender' : pairs.some(isVerb) ? 'conjugation' : pairs.some(isAgr) ? 'agreement' : 'vocabulary';
+  const parts=pairs.filter(p=>p[1]).map(([e,m])=>`<b>${disp(e)}</b> → <b>${disp(m)}</b>`);
+  const notNeeded=pairs.filter(p=>!p[1]).map(([e])=>`<b>${disp(e)}</b>`), missing=left.map(m=>`<b>${disp(m)}</b>`);
+  const why = tag==='gender' ? (pairs.some(([e])=>/^(une|la|ma|ta|sa|cette|elle|elles)$/.test(e)) ? ' The noun is <b>masculine</b>.' : ' The noun is <b>feminine</b>.')
+            : tag==='conjugation' ? ' The verb has to match its subject.'
+            : tag==='agreement' ? ' The adjective must match the noun (masculine/feminine, singular/plural).' : '';
+  const note=[parts.length?'You used '+parts.join(', ')+'.':'', notNeeded.length?'Not needed: '+notNeeded.join(', ')+'.':'', missing.length?'Missing: '+missing.join(', ')+'.':''].filter(Boolean).join(' ')+why;
+  return {tag, note, ansHtml:mark(new Set(pairs.map(p=>p[1]).filter(Boolean).concat(left)))};
+}
 
 /* =====================================================================
    COACH TEF · chapters, state, spaced repetition, Claude, lesson engine
@@ -1764,14 +1797,14 @@ function onResult(entry, ok, info){
   if(LS.answered){ if(ok){ const t=$('#fb-text .fb-title'); if(t) t.textContent='✓ Got it that time!'; $('#fb').className='feedback ok'; sfx('ok'); } return; }
   LS.answered=true;
   const q=entry.q, first=entry.tries===0; entry.tries++;
-  if(first){ if(!LS.opts.noSrs) record(q, ok); LS.results.push({q, ok}); if(!ok) logError(q, q.tag); }
+  if(first){ if(!LS.opts.noSrs) record(q, ok); LS.results.push({q, ok}); if(!ok) logError(q, info.tag||q.tag); }
   LS.queue.shift();
   if(ok){ LS.done++; let gain=first?(SPEAKING.includes(q.t)?15:10):5; if(first){ LS.firstOk++; LS.combo++; if(LS.combo>=5) gain+=5; } S.xp+=gain; LS.xp+=gain; touchDay(); sfx('ok'); if(LS.combo&&LS.combo%5===0) confetti(); }
   else { LS.combo=0; sfx('no'); if(!LS.missed.includes(q)) LS.missed.push(q); if(entry.tries<2 && !LS.opts.noRetry) LS.queue.splice(Math.min(LS.queue.length,3+Math.floor(Math.random()*2)),0,entry); else LS.done++; }
   saveResume(); save(); updProg();
   const fb=$('#fb'); fb.className='feedback '+(ok?'ok':'no');
   const tip = !ok && (q.u?q.u.tip:(q.t==='clk'||q.t==='clkL')?UNITS.find(u=>u.id==='heure2').tip:'');
-  const tagHtml = !ok && first && q.tag ? `<span class="tag">${escH(q.tag)}</span>` : '';
+  const tagHtml = !ok && first && (info.tag||q.tag) ? `<span class="tag">${escH(info.tag||q.tag)}</span>` : '';
   $('#fb-text').innerHTML=`<div class="fb-title">${ok?(info.title||pick(PRAISE))+(first?'':' (second try)'):(info.title||'Not quite')}${tagHtml}</div>
     ${info.ans?`<div class="fb-ans">${ok?'':'Answer: '}<b>${info.ansHtml||escH(info.ans)}</b>${info.say?` <button class="mini" id="fb-hear" type="button" aria-label="Hear it">🔊</button>`:''}</div>`:''}
     ${info.note?`<div class="fb-tip">${info.note}</div>`:''}
