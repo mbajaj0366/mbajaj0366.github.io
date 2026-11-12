@@ -276,6 +276,15 @@ pre.md{white-space:pre-wrap;background:var(--sunk);border-radius:12px;padding:12
 .fcard{display:grid;gap:8px;justify-items:start}
 @media (max-width:560px){.levels{grid-template-columns:repeat(2,minmax(0,1fr))}.flow{grid-template-columns:repeat(2,minmax(0,1fr))}.step{grid-template-columns:auto 1fr}.step .go{grid-column:1/-1;grid-row:auto;justify-self:stretch}}
 
+#guide{position:fixed;inset:0;z-index:60;background:var(--bg,#f4f5fa);overflow-y:auto;-webkit-overflow-scrolling:touch}
+#guide[hidden]{display:none}
+.guide-in{max-width:760px;margin:0 auto;padding:12px 16px 40px;display:grid;gap:12px}
+.guide-top{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;background:inherit;background:var(--bg,#f4f5fa)}
+.guide-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.guide-tabs .mini{white-space:nowrap;flex:none}.guide-tabs .mini.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+body.guide-open{overflow:hidden}
+#ls-guide{margin-left:6px;flex:none}
+
 #settings2 details{border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--bg)}
 #settings2 summary{cursor:pointer;list-style:revert}
 #settings2 details[open]{display:grid;gap:8px}
@@ -1674,13 +1683,21 @@ async function generateItems(n, mode, kind, count, {focus, onStatus, signal}={})
 let LS=null, lsTimer=null;
 const SPEAKING=['sp','sy','clk'];
 const PRAISE=['Parfait !','Bravo !','Excellent !','Très bien !','Super !','Génial !'];
-function resumeFor(key){ const r=S.resume; if(!key||!r||r.key!==key||!Array.isArray(r.q)||!r.q.length) return null; if(!r.q.every(e=>ITEM[e.id])) return null; if(Date.now()-(r.t||0)>21*DAY) return null; return r; }
+function migrateResume(){ if(S.resume){ S.resumes=S.resumes||{}; if(S.resume.key) S.resumes[S.resume.key]=S.resume; S.resumeLast=S.resume.key; delete S.resume; } S.resumes=S.resumes||{}; }
+function delResume(k){ migrateResume(); if(k) delete S.resumes[k]; if(S.resumeLast===k) S.resumeLast=null; }
+function allResumes(){ migrateResume(); return Object.keys(S.resumes).map(k=>resumeFor(k)).filter(Boolean).sort((a,b)=>b.t-a.t); }
+function latestResume(){ migrateResume(); return (S.resumeLast&&resumeFor(S.resumeLast)) || allResumes()[0] || null; }
+function pruneResumes(){ const keep=new Set(allResumes().slice(0,15).map(r=>r.key)); Object.keys(S.resumes).forEach(k=>{ if(!keep.has(k)) delete S.resumes[k]; }); }
+function resumeFor(key){ migrateResume(); const r=S.resumes[key]; if(!key||!r||!Array.isArray(r.q)||!r.q.length) return null; if(!r.q.every(e=>ITEM[e.id])) return null; if(Date.now()-(r.t||0)>21*DAY) return null; return r; }
 function saveResume(){
   if(!LS||!LS.opts.resumeKey) return;
-  if(!LS.queue.length){ if(S.resume&&S.resume.key===LS.opts.resumeKey) S.resume=null; return; }
+  if(!LS.queue.length){ delResume(LS.opts.resumeKey); return; }
+  if(!LS.done && !LS.results.length) return;   // nothing answered yet: no place to come back to
   if(LS.queue.some(e=>!e.q.id||!ITEM[e.q.id])) return;
-  S.resume={key:LS.opts.resumeKey, title:LS.title, step:LS.opts.step||null, q:LS.queue.map(e=>({id:e.q.id, tries:e.tries})), total:LS.total, done:LS.done, firstOk:LS.firstOk, xp:LS.xp, combo:LS.combo,
+  migrateResume(); S.resumeLast=LS.opts.resumeKey;
+  S.resumes[LS.opts.resumeKey]={key:LS.opts.resumeKey, title:LS.title, step:LS.opts.step||null, q:LS.queue.map(e=>({id:e.q.id, tries:e.tries})), total:LS.total, done:LS.done, firstOk:LS.firstOk, xp:LS.xp, combo:LS.combo,
     missed:LS.missed.map(q=>q.id).filter(Boolean), results:LS.results.filter(x=>x.q&&x.q.id).map(x=>({id:x.q.id, ok:x.ok})), t:Date.now()};
+  pruneResumes();
 }
 function askResume(items, opts, r){
   showView('task');
@@ -1690,12 +1707,12 @@ function askResume(items, opts, r){
     <div class="meter"><i style="width:${Math.round(r.done/r.total*100)}%"></i></div>
     <div class="row"><button class="btn solid big" id="rs-go" type="button">Continue ▶</button><button class="btn ghost" id="rs-new" type="button">Start over</button></div></div>`;
   $('#rs-go').onclick=()=>startLesson(items,{...opts,_resolved:'resume'});
-  $('#rs-new').onclick=()=>{ S.resume=null; save(); if(opts.restart) opts.restart(); else startLesson(items,{...opts,_resolved:'fresh'}); };
+  $('#rs-new').onclick=()=>{ delResume(opts.resumeKey); save(); if(opts.restart) opts.restart(); else startLesson(items,{...opts,_resolved:'fresh'}); };
 }
 function startLesson(items, opts={}){
   const r = opts._resolved ? (opts._resolved==='resume'?resumeFor(opts.resumeKey):null) : resumeFor(opts.resumeKey);
   if(r && !opts._resolved){ if(opts.autoResume) return startLesson(items,{...opts,_resolved:'resume'}); return askResume(items, opts, r); }
-  if(!r && opts.resumeKey && S.resume && S.resume.key===opts.resumeKey){ S.resume=null; }
+  if(!r && opts.resumeKey) delResume(opts.resumeKey);
   items=(items||[]).filter(Boolean);
   if(!r && !items.length){ if(opts.restart && opts._resolved!=='fresh'){ return opts.restart(); } toast('Nothing to practise here yet.'); return; }
   LS={opts, title:(r&&r.title)||opts.title||'', kind:opts.kind||'practice', queue:items.map(q=>({q,tries:0})), total:items.length, done:0, firstOk:0, combo:0, xp:0, missed:[], results:[], answered:false,
@@ -1712,9 +1729,10 @@ function tickTimer(){ if(!LS||!LS.deadline){ clearInterval(lsTimer); return; } c
 function quitTo(){ return (LS&&LS.opts.back)||'today'; }
 function lessonShell(inner){
   const el=$('#v-lesson');
-  el.innerHTML=`<div class="lesson-top"><button class="x" id="ls-x" type="button" aria-label="Quit">×</button><div class="prog"><i id="ls-prog"></i></div>${LS&&LS.deadline?'<span class="timer" id="ls-timer"></span>':''}<span class="combo" id="ls-combo"></span></div>
+  el.innerHTML=`<div class="lesson-top"><button class="x" id="ls-x" type="button" aria-label="Quit">×</button><div class="prog"><i id="ls-prog"></i></div>${LS&&LS.deadline?'<span class="timer" id="ls-timer"></span>':''}<span class="combo" id="ls-combo"></span>${guideAvailable()?'<button class="mini" id="ls-guide" type="button" title="Look at the lesson notes, then come back to this question">📖 Guide</button>':''}</div>
     ${LS&&LS.title?`<div class="small muted" style="margin:-8px 0 10px">${escH(LS.title)}</div>`:''}${inner}`;
   $('#ls-x').onclick=()=>{ if(activeRec) try{activeRec.abort()}catch(e){} clearInterval(lsTimer); const b=quitTo(); LS=null; showView(b); };
+  if($('#ls-guide')) $('#ls-guide').onclick=()=>openGuide();
   updProg(); tickTimer();
 }
 function updProg(){ const p=$('#ls-prog'); if(p&&LS) p.style.width=Math.round(LS.done/LS.total*100)+'%'; const c=$('#ls-combo'); if(c&&LS) c.textContent=LS.combo>=3?'🔥'+LS.combo:''; }
@@ -1771,7 +1789,7 @@ function endLesson(){
   const scored=LS.results.filter(r=>r.ok!==null), acc = LS.total ? LS.firstOk/LS.total : 0, stars = acc>=.9?3:acc>=.7?2:1;
   const res={acc, firstOk:LS.firstOk, total:LS.total, results:LS.results, missed:LS.missed.slice()};
   if(LS.opts.step) markStep(LS.opts.step);
-  if(LS.opts.resumeKey&&S.resume&&S.resume.key===LS.opts.resumeKey) S.resume=null;
+  if(LS.opts.resumeKey) delResume(LS.opts.resumeKey);
   touchDay(); save();
   let extra = LS.opts.onEnd ? (LS.opts.onEnd(res)||{}) : {};
   save(); sfx('win'); if(stars===3&&!extra.quiet) confetti();
@@ -1808,6 +1826,28 @@ R.fc=(q,card,api)=>{
     $('#fc-no',card).onclick=()=>api.result(false,{ans:q.fr+' = '+q.en}); $('#fc-yes',card).onclick=()=>api.result(true,{ans:q.fr+' = '+q.en, title:'Bien !'}); $('#fc-yes',card).focus(); };
 };
 
+/* ---------- guide while practising: notes open over the question; closing returns to the same question ---------- */
+function guideUnits(n){ return (CH[n]&&CH[n].units||[]).filter(u=>typeof u.learn==='function'); }
+function guideQ(){ return LS&&LS.queue&&LS.queue[0]&&LS.queue[0].q; }
+function guideAvailable(){ if(!LS||LS.opts.noRetry) return false; const q=guideQ(); return !!(q&&q.ch&&guideUnits(q.ch).length); }
+function openGuide(uid){
+  const q=guideQ(); if(!q) return; const n=q.ch, units=guideUnits(n); if(!units.length) return;
+  try{ resetMic(); }catch(e){} if(synth) synth.cancel(); if(seqStop) seqStop();
+  const cur = (uid&&units.find(u=>u.id===uid)) || units.find(u=>u.q&&u.q.includes(q)) || (LS.opts.intro&&units.find(u=>u.id===LS.opts.intro.id)) || units[0];
+  let g=$('#guide'); if(!g){ g=document.createElement('div'); g.id='guide'; g.setAttribute('role','dialog'); g.setAttribute('aria-label','Lesson guide'); document.body.appendChild(g); }
+  let body=''; try{ body=cur.learn(); }catch(e){ body='<p class="muted">This part has no notes.</p>'; }
+  g.innerHTML=`<div class="guide-in"><div class="guide-top"><b>📖 Ch${n} guide</b><button class="btn solid" id="guide-back" type="button">Back to my question ↩</button></div>
+    <div class="guide-tabs">${units.map(u=>`<button class="mini ${u===cur?'on':''}" type="button" data-guide-u="${escH(u.id)}">${escH((u.ic||'')+' '+u.t)}</button>`).join('')}</div>
+    <div class="card learn">${body}</div>
+    <div class="row"><button class="btn solid big" id="guide-back2" type="button">Back to my question ↩</button></div></div>`;
+  g.hidden=false; document.body.classList.add('guide-open'); g.scrollTop=0;
+  $$('[data-guide-u]',g).forEach(b=>b.onclick=()=>openGuide(b.dataset.guideU));
+  $('#guide-back').onclick=$('#guide-back2').onclick=closeGuide;
+  $('#guide-back').focus();
+}
+function closeGuide(){ const g=$('#guide'); if(!g||g.hidden) return; if(synth) synth.cancel(); if(seqStop) seqStop(); g.hidden=true; document.body.classList.remove('guide-open'); const b=$('#ls-guide'); if(b) b.focus(); }
+document.addEventListener('keydown',e=>{ const g=$('#guide'); if(!g||g.hidden) return; if(e.key==='Escape'){ e.preventDefault(); closeGuide(); } e.stopImmediatePropagation(); },true);
+
 /* =====================================================================
    COACH TEF · screens
    ===================================================================== */
@@ -1817,6 +1857,7 @@ let curView='today';
 function showView(v){
   if(v!=='onboard' && !S.profile && TABS.includes(v)) v='onboard';
   try{ if(IMP) IMP.visible=false; }catch(e){}
+  try{ closeGuide(); }catch(e){}
   curView=v;
   VIEWS2.forEach(n=>{ const el=$('#v-'+n); if(el) el.hidden = n!==v; });
   $$('.tab[data-view]').forEach(t=>t.setAttribute('aria-selected', String(t.dataset.view===v)));
@@ -1900,15 +1941,17 @@ function renderToday(){
   if(S.assessedAt && Date.now()-lastMock>7*DAY) ban.push(`<div class="banner info"><span>🎯 Weekly mini-mock is due (TEF format, timed).</span><button class="btn solid" data-go="exam" type="button">Go to Examen</button></div>`);
   if(!aiOn()) ban.push(`<div class="banner info"><span>✨ Add your Anthropic API key to turn on role-play, writing grading and extended practice. Course practice and review already work.</span><button class="btn solid" type="button" onclick="openSettings('set-key')">Add key</button></div>`);
   const next=steps.find(s=>!s.done);
-  const rs=S.resume&&resumeFor(S.resume.key);
+  const rs=latestResume(), others=allResumes().filter(x=>!rs||x.key!==rs.key).slice(0,3);
   const resumeHtml = rs ? `<div class="hero-card" style="margin-bottom:12px;border-color:var(--accent)"><div style="min-width:0;flex:1"><div class="small muted">Pick up where you left off · question ${Math.min(rs.done+1,rs.total)} of ${rs.total}</div><div class="big">${escH(rs.title||'Your lesson')}</div><div class="meter" style="margin-top:6px"><i style="width:${Math.round(rs.done/rs.total*100)}%"></i></div></div><div class="row"><button class="btn solid big" id="resume-go" type="button">Continue ▶</button></div></div>` : '';
-  el.innerHTML=ban.join('')+resumeHtml+`<div class="hero-card"><div><div class="small muted">Session du jour · ~${steps.reduce((a,s)=>a+s.min,0)} min · ${nDone}/${steps.length} done</div><div class="big">${next?escH(next.t):'Session complete. À demain !'}</div></div>
+  const othersHtml = others.length ? `<div class="row small" style="margin:-4px 0 12px;align-items:center"><span class="muted">Also unfinished:</span>${others.map(o=>`<button class="mini" type="button" data-resume-key="${escH(o.key)}">${escH(o.title||'Lesson')} · ${Math.min(o.done+1,o.total)}/${o.total}</button>`).join('')}</div>` : '';
+  el.innerHTML=ban.join('')+resumeHtml+othersHtml+`<div class="hero-card"><div><div class="small muted">Session du jour · ~${steps.reduce((a,s)=>a+s.min,0)} min · ${nDone}/${steps.length} done</div><div class="big">${next?escH(next.t):'Session complete. À demain !'}</div></div>
     <div class="row">${next?`<button class="btn solid big" data-step="${next.k}" type="button">${nDone?'Continue':'Start'} ▶</button>`:''}</div></div>
     <div class="sect-h"><h2>Steps</h2><span class="small muted">Current chapter: Ch${ch.n} · ${escH(ch.t)} · <a href="#chapters" data-go="chapters">change</a></span></div>
     <div class="steps">${steps.map(s=>`<div class="step ${s.done?'done':''}"><span class="ic">${s.done?'✅':s.ic}</span><div><div class="nm">${escH(s.t)}</div><div class="sb">${escH(s.sb)} · ~${s.min} min</div></div><button class="btn ${s.done?'ghost':'solid'} go" data-step="${s.k}" type="button">${s.done?'Again':'Start'}</button></div>`).join('')}</div>
     <div class="sect-h"><h2>Tomorrow</h2></div><div class="card">${md(tomorrowPlan())}</div>`;
   $$('[data-step]',el).forEach(b=>b.onclick=()=>{ const s=steps.find(x=>x.k===b.dataset.step); s&&s.run(); });
   if($('#resume-go')) $('#resume-go').onclick=()=>resumeLast();
+  $$('[data-resume-key]',el).forEach(b=>b.onclick=()=>resumeLast(b.dataset.resumeKey));
 }
 function tomorrowPlan(){
   const ch=curCh(), fl=chFlow(ch.n), top=topTags()[0];
@@ -1929,7 +1972,7 @@ function startUnit(u, o={}){
 async function startPractice(n, kind, mode, o={}){
   const ch=CH[n], bank=Object.values(ITEM).filter(q=>q.ch===n && q.src==='course' && !q.gen);
   const rkey=`practice:${n}:${kind}:${mode}`;
-  if(resumeFor(rkey)&&!o.fresh) return startLesson([],{title:S.resume.title, step:o.step, back:o.back||'chapters', resumeKey:rkey, autoResume:o.autoResume, onEnd:()=>{ if(mode!=='course') chState(n).ext=true; if(o.after) o.after(); return {}; }, restart:()=>startPractice(n,kind,mode,{...o,fresh:true,autoResume:false})});
+  if(resumeFor(rkey)&&!o.fresh) return startLesson([],{title:resumeFor(rkey).title, step:o.step, back:o.back||'chapters', resumeKey:rkey, autoResume:o.autoResume, onEnd:()=>{ if(mode!=='course') chState(n).ext=true; if(o.after) o.after(); return {}; }, restart:()=>startPractice(n,kind,mode,{...o,fresh:true,autoResume:false})});
   const typesFor={quiz:['mcq','ls','tr','match','wb','sy','sp','conj','fill'], gaps:['fill','wb'], dictation:['lt'], flashcards:['fc']}[kind]||SCORED;
   let course=[];
   if(kind==='flashcards'){
@@ -2078,15 +2121,15 @@ function renderReview(){
   $$('[data-fc]',el).forEach(b=>b.onclick=()=>startPractice(+b.dataset.fc,'flashcards',chMode[+b.dataset.fc]||'course',{back:'review'}));
 }
 
-function resumeLast(){
-  const r=S.resume; if(!r||!resumeFor(r.key)) return renderToday();
+function resumeLast(key){
+  const r=key?resumeFor(key):latestResume(); if(!r) return renderToday();
   const k=r.key, o={autoResume:true, back:'today', step:r.step||undefined};
   if(k.startsWith('unit:')){ const [n,uid]=k.slice(5).split(/\.(.+)/); const u=CH[+n]&&CH[+n].units.find(x=>x.id===uid); if(u) return startUnit(u,o); }
   else if(k.startsWith('practice:')){ const [,n,kind,mode]=k.split(':'); return startPractice(+n,kind,mode,o); }
   else if(k.startsWith('check:')) return startCheck(+k.slice(6),o);
   else if(k==='review') return startReview(o);
   else if(k.startsWith('drill:')) return startDrill(k.slice(6),o);
-  S.resume=null; save(); renderToday();
+  delResume(k); save(); renderToday();
 }
 
 /* =====================================================================
