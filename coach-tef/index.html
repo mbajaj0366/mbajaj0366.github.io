@@ -1394,7 +1394,7 @@ const CHAPTER_DEFS=[
 ];
 const MISSING_CH=[1,2,3];
 const ITEM={};
-function registerItem(q){ ITEM[q.id]=q; return q; }
+function registerItem(q){ if(q&&!q.d) q.d=qLevel(q.t); ITEM[q.id]=q; return q; }
 function loadChapters(){
   CHAPTER_DEFS.forEach(d=>{
     const units=d.units();
@@ -1650,13 +1650,22 @@ const ITEM_SHAPES=`Allowed item shapes (use a varied mix):
 {"t":"lt","au":"short French sentence for dictation","tag":"spelling","src":"…","cite":"…"}
 {"t":"fc","fr":"French word or phrase","pron":"English-style respelling, nasal vowels as N, mark liaisons with ‿","en":"English","tag":"vocabulary","src":"…","cite":"…"}
 TAG is one of: ${TAGS.join(', ')}.
-Rules: French must be correct, natural France French; at most 12 words per sentence; "a" must equal one option exactly; options distinct; masculine forms for the learner.`;
+Rules: French must be correct, natural France French; "a" must equal one option exactly; options distinct; masculine forms for the learner.`;
 async function generateItems(n, mode, kind, count, {focus, onStatus, signal}={}){
   const kinds = {quiz:'mcq, fill, tr, sy and lt', flashcards:'fc only', gaps:'fill only', dictation:'lt only', drill:'mcq, fill, tr and sy'}[kind]||'a mix';
   const prompt=`You write French practice items for a tutoring app.\n${learnerCtx()}\n\nCreate ${count} items. Use these types: ${kinds}.\n${ITEM_SHAPES}\n${modeRule(mode)}\n${focus?'Every item must target this error type: '+focus+'.':''}\nReply with only JSON: {"items":[...]}\n\nCHAPTER ${n}: ${CH[n].t}\nCHAPTER CONTENT:\n${chText(n)}`;
   onStatus&&onStatus('Claude is writing your practice…');
-  const res=await ask(prompt,{json:true, signal});
-  const items=keepGenerated(res&&res.items, n, mode);
+  const mixed=['quiz','drill'].includes(kind)||!kind, gp=focus?('error type: '+focus):('the grammar of chapter '+n+': '+(CH[n].t||'')), known=mode==='extended'?null:knownWords(n+1);
+  const fullPrompt=prompt.replace('\nReply with only JSON', '\n'+(mixed?rulesBlock(n, gp, count, known||new Set()).replace(/WORDS ALREADY TAUGHT[^]*$/, known?'WORDS ALREADY TAUGHT (this and earlier chapters): '+knownBlock(known,7000):'In extended mode new everyday words are allowed, but keep sentences simple.'):'Keep sentences at most '+QR_MAXW+' words, with no passé composé, no pouvoir/vouloir/devoir + infinitive and no "pas de" unless the chapter teaches it.')+'\nReply with only JSON'); const res=await ask(fullPrompt,{json:true, signal});
+  let raw=(res&&res.items)||[];
+  { const vs=raw.map(x=>({x,v:validItem(x)})).filter(o=>o.v); const fixMap=new Map();
+    const rebuild=async({fixes,need,want})=>{ const lv=[1,2,3].filter(l=>need[l]).map(l=>`${need[l]} more at difficulty ${l}`).join(', ');
+      const rr=await ask(fullPrompt+'\n\n'+(fixes?'These items broke the QUESTION RULES. Replace each with a new item of the SAME difficulty that follows them:\n'+fixes+'\n':'')+(lv?'Also add: '+lv+'.\n':'')+'Write '+want+' items. Reply with only JSON: {"items":[...]}',{json:true, signal});
+      return ((rr&&rr.items)||[]).map(x=>{ const v=validItem(x); if(v) fixMap.set(v,x); return v; }).filter(Boolean); };
+    const fx=await enforceRules(vs.map(o=>o.v), {n, gp, count:mixed?count:vs.length, known, signal, rebuild:mixed?rebuild:null});
+    fixMap.forEach((x,v)=>vs.push({x,v}));
+    const ok=new Set(fx.items); raw=vs.filter(o=>ok.has(o.v)).sort((a,b)=>a.v.d-b.v.d).map(o=>Object.assign(o.x,{difficulty:o.v.d})); }
+  const items=keepGenerated(raw, n, mode);
   if(!items.length) throw {code:'invalid_json'};
   save(); return items;
 }
@@ -1715,7 +1724,7 @@ function renderIntro(u){
 }
 function srcLine(q){
   if(q.src==='extended') return `<div class="srcl ext">✨ Beyond the course${q.ch?' · Ch'+q.ch:''}${q.cite?' · '+escH(q.cite):''}</div>`;
-  if(q.ch) return `<div class="srcl">📘 From the course · Ch${q.ch}${q.cite?' · '+escH(q.cite):''}</div>`;
+  if(q.ch) return `<div class="srcl">📘 From the course · Ch${q.ch}${q.cite?' · '+escH(q.cite):''}${q.d?' · '+'●'.repeat(q.d)+'○'.repeat(3-q.d):''}</div>`;
   return '';
 }
 function renderQ(){
@@ -2592,6 +2601,130 @@ $('#gear').addEventListener('click',()=>{ if(!$('#settings').hidden) renderSetti
 if('serviceWorker' in navigator && (location.protocol==='https:'||location.hostname==='localhost')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
 /* =====================================================================
+   QUESTION RULES (learner A1–A2)
+   - one grammar point per question: the lesson's point
+   - every other word comes from earlier chapters (or very common words)
+   - build / translate sentences: at most 8 words
+   - no passé composé, pouvoir/vouloir/devoir + infinitive, or "pas de"
+     unless the lesson teaches it
+   - difficulty 1 = multiple choice, 2 = fill-in / word tiles, 3 = free translation
+   - per lesson: 50% level 1, 35% level 2, 15% level 3
+   ===================================================================== */
+const QR_MIX={1:.50, 2:.35, 3:.15};
+const QR_MAXW=8;
+// which difficulty each question type is
+function qLevel(t){ return ({mcq:1, ls:1, match:1, fc:1, sp:1, fill:2, wb:2, conj:2, lt:2, tr:3, sy:3})[t]||1; }
+// words a beginner may always use, even if no imported chapter has them yet
+const QR_COMMON=`je j' tu il elle on nous vous ils elles me te se moi toi lui eux ce c' ça cela
+être suis es est sommes êtes sont avoir ai as a avons avez ont aller vais vas va allons allez vont
+le la les l' un une des du de d' au aux à en dans sur sous avec pour par chez et ou mais donc aussi très bien
+ne n' pas oui non si qui que qu' quoi où quand comment pourquoi combien quel quelle quels quelles
+mon ma mes ton ta tes son sa ses notre nos votre vos leur leurs ce cet cette ces
+il y a voilà voici bonjour salut merci au revoir s'il te vous plaît madame monsieur
+zéro un deux trois quatre cinq six sept huit neuf dix onze douze treize quatorze quinze seize vingt trente quarante cinquante soixante cent
+aujourd'hui demain lundi mardi mercredi jeudi vendredi samedi dimanche heure heures ans an`;
+function qrNorm(w){ return String(w||'').toLowerCase().normalize('NFC').replace(/[’`]/g,"'"); }
+function qrTokens(text, keepCaps){
+  const out=[]; String(text||'').replace(/[’`]/g,"'").split(/[^A-Za-zÀ-ÖØ-öø-ÿœŒæÆ0-9'-]+/).forEach((raw,i)=>{
+    raw.split(/[-]/).forEach(part=>{ if(!part) return;
+      const bits=part.split("'"); bits.forEach((b,j)=>{ if(!b) return; const tok=j<bits.length-1?b+"'":b;
+        if(/^\d+$/.test(b)) return;                                    // numbers are always fine
+        out.push({w:qrNorm(tok), cap:/^[A-ZÀ-Ö]/.test(b)}); }); }); });
+  return out;
+}
+// every word the learner has met: earlier chapters (built-in + imported), this chapter's own files, common words
+function knownWords(n, extraText){
+  const set=new Set(); const add=t=>qrTokens(t).forEach(x=>set.add(x.w));
+  add(QR_COMMON);
+  Object.values(ITEM).forEach(q=>{ if(!q||!(q.ch<n)) return;
+    [q.fr,q.au,q.s,q.say,q.ctx,q.v].forEach(add);
+    [q.a,q.alt,q.o].forEach(v=>Array.isArray(v)?v.forEach(add):add(v));
+    (q.pr||[]).forEach(p=>add(p[0])); (q.rows||[]).forEach(r=>add(r.join(' '))); });
+  Object.entries(S.custom||{}).forEach(([k,c])=>{ if(+k<n){ add(c.text); (c.units||[]).forEach(u=>(u.vocab||[]).forEach(v=>add(v.fr))); } });
+  Object.values(CH).forEach(ch=>{ if(ch.n<n) (ch.cards||[]).forEach(c=>add(c.fr)); });
+  if(extraText) add(extraText);
+  return set;
+}
+// the French a question shows or expects
+function frenchOf(q){
+  switch(q.t){
+    case 'mcq': return [q.ctx, q.say, q.fro?q.o.join(' '):'', looksFr(q.p)?q.p:''].filter(Boolean).join(' ');
+    case 'ls': return q.au; case 'fill': return q.s.replace(/___/g,' ')+' '+q.a.join(' ');
+    case 'tr': return q.a.join(' '); case 'sy': return [q.fr].concat(q.alt||[]).join(' ');
+    case 'sp': case 'fc': return q.fr; case 'lt': return q.au; case 'wb': return q.a+' '+(q.x||[]).join(' ');
+    case 'match': return q.pr.map(p=>p[0]).join(' '); case 'conj': return q.rows.map(r=>r.join(' ')).join(' ');
+  }
+  return '';
+}
+function firstSentence(q){ return q.t==='wb'?q.a : q.t==='tr'?q.a[0] : q.t==='sy'?q.fr : ''; }
+function wordCount(s){ return String(s||'').replace(/[.!?,;:«»"]/g,' ').split(/\s+/).filter(Boolean).length; }
+// grammar the lesson is allowed to use because it teaches it
+function lessonAllows(gpText){ const g=qrNorm(gpText);
+  return { pc:/pass[eé] compos[eé]|past tense|passé/.test(g), modal:/pouvoir|vouloir|devoir|modal|\binfinitiv/.test(g), pasde:/pas de|n[eé]gati|negat/.test(g) }; }
+const RX_PC_AVOIR=/\b(?:j'ai|ai|as|a|avons|avez|ont)\s+(?:(?:pas|jamais|bien|déjà|beaucoup|trop)\s+)?(?!faim\b|soif\b|froid\b|chaud\b|peur\b|mal\b|besoin\b|envie\b|raison\b|tort\b|sommeil\b|ans\b|un\b|une\b|des\b|du\b|de\b|le\b|la\b|les\b|mon\b|ma\b|mes\b|ton\b|ta\b|tes\b|son\b|sa\b|ses\b|deux\b|trois\b|midi\b|ici\b|lundi\b|mardi\b|mercredi\b|jeudi\b|vendredi\b|samedi\b|dimanche\b|aussi\b|y\b|tu\b|toi\b|moi\b|lui\b|nous\b|vous\b|plus\b|tous\b|ceci\b|parfois\b|souvent\b|toujours\b|encore\b)[a-zàâçéèêëîïôûùüÿœ]+(?:é|ée|és|ées|i|is|it|u|us|ert|ort|eint|ait)(?![\wà-ÿœ])/i;
+const RX_PC_ETRE=/\b(?:suis|es|est|sommes|êtes|sont)\s+(?:(?:pas|déjà|bien)\s+)?(?:allé|venu|parti|arrivé|sorti|entré|rentré|resté|né|mort|tombé|monté|descendu|retourné|devenu|revenu|passé)e?s?(?![\wà-ÿœ])/i;
+const RX_MODAL=/\b(?:peux|peut|pouvons|pouvez|peuvent|veux|veut|voulons|voulez|veulent|voudrais|voudrait|dois|doit|devons|devez|doivent)\s+(?:(?:pas|bien|aussi|toujours|souvent)\s+)?(?:(?:me|te|se|nous|vous|le|la|les|lui|leur|l'|m'|t'|s')\s*)?[a-zàâçéèêëîïôûùüÿœ]+(?:er|ir|re|oir)(?![\wà-ÿœ])/i;
+const RX_PASDE=/\bpas\s+d(?:e\b|')/i;
+// returns a list of problems; empty = the question follows the rules
+function lintQuestion(q, {known, gp, n}){
+  const probs=[]; const fr=frenchOf(q); const ok=lessonAllows(gp);
+  const s1=firstSentence(q);
+  if(s1 && wordCount(s1)>QR_MAXW) probs.push(`too long (${wordCount(s1)} words, max ${QR_MAXW})`);
+  if((q.t==='tr')&&q.a.some(a=>wordCount(a)>QR_MAXW+1)) probs.push('an accepted answer is too long');
+  if(!ok.pc && q.t!=='conj' && (RX_PC_AVOIR.test(fr)||RX_PC_ETRE.test(fr))) probs.push('uses the passé composé, which this lesson does not teach');
+  if(!ok.modal && RX_MODAL.test(fr)) probs.push('uses pouvoir/vouloir/devoir + infinitive, which this lesson does not teach');
+  if(!ok.pasde && RX_PASDE.test(fr)) probs.push('uses "pas de", which this lesson does not teach');
+  if(known){ const unk=[...new Set(qrTokens(fr).filter(x=>!x.cap&&x.w.length>1&&!known.has(x.w)).map(x=>x.w))];
+    if(unk.length) probs.push('words not taught yet: '+unk.slice(0,6).join(', ')); q._unk=unk.length; }
+  return probs;
+}
+// keep the 50 / 35 / 15 mix; drop extras from the level that has too many
+function balanceMix(items, target){
+  const by={1:[],2:[],3:[]}; items.forEach(q=>by[q.d].push(q));
+  const total=Math.min(target||items.length, items.length);
+  // largest number N <= total that the levels we have can fill at 50/35/15
+  let best=null;
+  for(let N=total;N>=4;N--){ const want={1:Math.round(N*QR_MIX[1]), 3:Math.max(1,Math.round(N*QR_MIX[3]))}; want[2]=N-want[1]-want[3];
+    if(by[1].length>=want[1]&&by[2].length>=want[2]&&by[3].length>=want[3]){ best=want; break; } }
+  if(!best) return {items:[1,2,3].flatMap(l=>by[l]), short:missingFor(by, total)};
+  return {items:[1,2,3].flatMap(l=>by[l].slice(0,best[l])), short:null};
+}
+function missingFor(by, N){ const want={1:Math.round(N*QR_MIX[1]), 3:Math.max(1,Math.round(N*QR_MIX[3]))}; want[2]=N-want[1]-want[3];
+  const m={}; [1,2,3].forEach(l=>{ if(by[l].length<want[l]) m[l]=want[l]-by[l].length; }); return Object.keys(m).length?m:null; }
+function knownBlock(known, max){ const w=[...known].filter(x=>x.length>1).sort(); let s=w.join(', '); return s.length>max?s.slice(0,max)+' …':s; }
+function rulesBlock(n, gp, count, known){
+  const l1=Math.round(count*QR_MIX[1]), l3=Math.max(1,Math.round(count*QR_MIX[3])), l2=count-l1-l3;
+  return `QUESTION RULES (the learner is A1–A2):
+- Each question tests ONE grammar point: this lesson's point, "${gp}". Put it in the item as "grammar_points":["${gp}"].
+- Every other word and verb form in the sentence must come from the WORDS ALREADY TAUGHT list below or this lesson's own material (or be very common: être, avoir, aller). No other words.
+- Build and translate questions (wb, tr, sy): at most ${QR_MAXW} words per sentence.
+- Do NOT use the passé composé, pouvoir/vouloir/devoir + infinitive, or negation with "pas de" unless this lesson teaches it.
+- Give every item "difficulty": 1 = multiple choice (mcq, ls, match, fc, sp), 2 = fill-in-the-blank or word tiles (fill, wb, conj, lt), 3 = free translation (tr, sy).
+- Make exactly ${count} items: ${l1} at difficulty 1, ${l2} at difficulty 2, ${l3} at difficulty 3 (50% / 35% / 15%). Order them 1 → 2 → 3.
+WORDS ALREADY TAUGHT (earlier chapters): ${knownBlock(known, 9000)}`;
+}
+// check a batch, ask Claude once to replace what breaks the rules, then keep the right mix
+async function enforceRules(items, {n, gp, count, known, signal, onText, rebuild}){
+  let kept=[], bad=[];
+  const check=list=>list.forEach(q=>{ q.d=qLevel(q.t); q.gp=[gp]; const p=lintQuestion(q,{known,gp,n}); if(p.length) bad.push({q,p}); else kept.push(q); });
+  check(items);
+  let bal=balanceMix(kept, count);
+  if((bad.length||bal.short) && rebuild){
+    const need=bal.short||{}; const want=[1,2,3].map(l=>(need[l]||0)).reduce((a,b)=>a+b,0)+bad.length;
+    const fixes=bad.slice(0,12).map(b=>`- ${JSON.stringify(stripQ(b.q))} → ${b.p.join('; ')}`).join('\n');
+    try{ const more=await rebuild({fixes, need, want:Math.min(want,14)}, signal, onText);
+      const prev=bad; bad=[]; check(more||[]); bal=balanceMix(kept, count);
+      if(bal.short){ // still short: take the least-bad leftovers (only "not taught" words, at most 1) so the lesson isn't empty
+        const spare=prev.concat(bad).filter(b=>b.p.length===1&&/^words not taught/.test(b.p[0])&&b.q._unk<=1).map(b=>b.q);
+        bal=balanceMix(kept.concat(spare), count); }
+    }catch(e){ if(e&&e.code==='cancelled') throw e; }
+  }
+  bal.items.forEach(q=>delete q._unk);
+  return {items:bal.items, rejected:bad.length};
+}
+function stripQ(q){ const o={...q}; ['d','gp','_unk','id','ch','u','uid'].forEach(k=>delete o[k]); return o; }
+
+/* =====================================================================
    COACH TEF · drag-and-drop chapter import (French with Alexa zips / PDFs)
    ===================================================================== */
 const LIBS={ jszip:'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js', pdf:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', pdfWorker:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js' };
@@ -2676,11 +2809,11 @@ async function planChapter(n, srcs, signal, onText){
   const prompt=`You turn a "French with Alexa" course chapter into an interactive lesson plan for a tutoring app.
 ${learnerCtx()}
 CHAPTER ${n}. Below are ALL the files from the chapter (support-guide PDFs, worksheets, exercise pages).
-Make a plan that covers EVERYTHING important: every grammar point and rule, every vocabulary list, every dialogue or text, every pronunciation point, and every worksheet/exercise item (with its answer key). Keep the course's order. Group into 4–10 units of one topic each (a worksheet goes with its topic's unit).
+Make a plan that covers EVERYTHING important: every grammar point and rule, every vocabulary list, every dialogue or text, every pronunciation point, and every worksheet/exercise item (with its answer key). Keep the course's order. Group into 4–10 units of one topic each (a worksheet goes with its topic's unit). Each unit teaches ONE grammar point.
 Reply with only JSON:
 {"title":"short French chapter title","sb":"one line in English listing the topics","tef":"2–3 sentences: where this chapter's content appears in the TEF Canada exam (compréhension orale/écrite, expression orale/écrite, sections A/B) and what tasks use it","scen":["3 short role-play scenarios using ONLY this chapter's language"],"wr":["one course writing task, 40–80 words, using this chapter's language"],
 "checklist":["every important item in the chapter, one short line each (aim for 15–40 lines)"],
-"units":[{"id":"short-slug","t":"unit title","ic":"one emoji","sb":"what it covers in a few words","tip":"the key rule in one or two sentences, in English with French examples","tag":"main error type: one of ${TAGS.join('|')}","files":["file names this unit draws from"],"covers":["checklist lines this unit covers"]}]}
+"units":[{"id":"short-slug","t":"unit title","ic":"one emoji","sb":"what it covers in a few words","tip":"the key rule in one or two sentences, in English with French examples","gp":"the ONE grammar point this unit teaches, e.g. \"avoir au présent\" or \"articles définis\" (a vocabulary-only unit: \"vocabulary: <topic>\")","tag":"main error type: one of ${TAGS.join('|')}","files":["file names this unit draws from"],"covers":["checklist lines this unit covers"]}]}
 FILES:${sourcesBlock(srcs,null,90000)}`;
   const r=await ask(prompt,{json:true, signal, maxTokens:8000, onText});
   if(!r||!Array.isArray(r.units)||!r.units.length) throw {code:'invalid_json'};
@@ -2689,23 +2822,33 @@ FILES:${sourcesBlock(srcs,null,90000)}`;
   return r;
 }
 async function buildUnit(n, plan, u, srcs, signal, onText){
+  const gp=String(u.gp||u.t).slice(0,80), COUNT=20;
+  const chText=srcs.filter(f=>!f.dupOf).map(f=>f.text).join(' ');
+  const known=knownWords(n, chText);
   const prompt=`You build ONE unit of an interactive French lesson from a "French with Alexa" course chapter.
 ${learnerCtx()}
 CHAPTER ${n}: ${plan.title}. UNIT: "${u.t}" (${u.sb||''}). It must cover: ${(u.covers||[]).join('; ')||u.sb}.
-COURSE MODE: use ONLY vocabulary, grammar, examples and phrasing found in the files below. Copy the course's own examples and every worksheet item that belongs to this unit (use its answer key). Do not invent material from outside the chapter. Every item: "src":"course" and a short "cite" naming the file or section.
+COURSE MODE: use ONLY vocabulary, grammar, examples and phrasing found in the files below. Use the course's own examples and the worksheet items that belong to this unit (use its answer key), shortened or adapted where needed to follow the QUESTION RULES. Do not invent material from outside the chapter. Every item: "src":"course" and a short "cite" naming the file or section.
 Reply with only JSON:
 {"learn":{"intro":"1–2 sentences in English","sections":[{"h":"heading","p":"short explanation in English","head":["column 1","column 2"],"table":[["French","English","optional pronunciation respelling"]],"examples":[["French sentence","English"]],"dialogue":[["Speaker","French line","English"]],"note":"a memory tip, a trap or a pronunciation point (liaison, silent letter, nasal)"}]},
  "vocab":[{"fr":"French word or phrase","en":"English","pron":"respelling"}],
- "q":[14–22 practice items in a pedagogical order: recognition first (match, mcq, ls), then production (fill, wb, tr, conj, lt), then speaking (sp, sy)]}
+ "q":[exactly ${COUNT} practice items following the QUESTION RULES, each with "difficulty" and "grammar_points"]}
 Omit any section field you don't need. Put every word list from this unit in "vocab".
 ${ITEM_SHAPES_FULL}
+${rulesBlock(n, gp, COUNT, known)}
 FILES:${sourcesBlock(srcs,u.files,45000)}`;
   const r=await ask(prompt,{json:true, signal, maxTokens:12000, onText});
-  const q=(r&&Array.isArray(r.q)?r.q:[]).map(x=>{ const v=validItemFull(x); if(!v) return null; v.tag=TAGS.includes(x.tag)?x.tag:(v.t==='sp'?'pronunciation':v.t==='lt'?'spelling':(TAGS.includes(u.tag)?u.tag:'vocabulary')); if(typeof x.cite==='string') v.cite=x.cite.slice(0,60); return v; }).filter(Boolean);
+  const clean=list=>(Array.isArray(list)?list:[]).map(x=>{ const v=validItemFull(x); if(!v) return null; v.tag=TAGS.includes(x.tag)?x.tag:(v.t==='sp'?'pronunciation':v.t==='lt'?'spelling':(TAGS.includes(u.tag)?u.tag:'vocabulary')); if(typeof x.cite==='string') v.cite=x.cite.slice(0,60); return v; }).filter(Boolean);
+  const rebuild=async({fixes,need,want},sig,ot)=>{
+    const lv=[1,2,3].filter(l=>need[l]).map(l=>`${need[l]} more at difficulty ${l}`).join(', ');
+    const rr=await ask(`You write replacement practice items for ONE unit of a French lesson.\n${learnerCtx()}\nCHAPTER ${n}: ${plan.title}. UNIT: "${u.t}". Grammar point: "${gp}".\n${fixes?'These items broke the rules. Replace each one with a new item of the SAME difficulty that follows them:\n'+fixes+'\n':''}${lv?'Also add: '+lv+'.\n':''}Write ${want} items in total. Reply with only JSON: {"q":[...]}\n${ITEM_SHAPES_FULL}\n${rulesBlock(n, gp, want, known)}\nFILES:${sourcesBlock(srcs,u.files,20000)}`,{json:true, signal:sig, maxTokens:6000, onText:ot});
+    return clean(rr&&rr.q); };
+  const fixed=await enforceRules(clean(r&&r.q), {n, gp, count:COUNT, known, signal, onText, rebuild});
+  const q=fixed.items;
   if(q.length<4) throw {code:'invalid_json'};
   const L=r.learn&&typeof r.learn==='object'?r.learn:{sections:[]};
   const vocab=(Array.isArray(r.vocab)?r.vocab:[]).filter(v=>v&&typeof v.fr==='string'&&typeof v.en==='string').slice(0,80).map(v=>({fr:v.fr,en:v.en,pron:typeof v.pron==='string'?v.pron:''}));
-  return {id:u.id, ic:typeof u.ic==='string'?u.ic.slice(0,4):'📘', t:u.t, sb:u.sb||'', tip:u.tip||'', tag:TAGS.includes(u.tag)?u.tag:'vocabulary', L, q, vocab};
+  return {id:u.id, gp, ic:typeof u.ic==='string'?u.ic.slice(0,4):'📘', t:u.t, sb:u.sb||'', tip:u.tip||'', tag:TAGS.includes(u.tag)?u.tag:'vocabulary', L, q, vocab};
 }
 function renderLearn(u){
   const L=u.L||{}, str=v=>typeof v==='string'?v:'';
@@ -2725,7 +2868,7 @@ function loadCustomChapters(){
   Object.entries(S.custom||{}).forEach(([n,c])=>{ n=+n; if(CH[n]&&!CH[n].custom&&!CH[n].imported) return;
     if(!c.built){ loadCustomChaptersNotes(n,c); return; }
     const units=c.units.map(u=>({id:u.id, ic:u.ic, t:u.t, sb:u.sb, tip:u.tip, tag:u.tag, src:'course', ch:n, q:u.q.map(x=>({...x})), learn:()=>renderLearn(u)}));
-    units.forEach(u=>u.q.forEach((q,i)=>{ q.id=`c${n}.${u.id}.${i}`; q.ch=n; q.u=u; q.uid=u.id; q.cite=q.cite||u.t; q.src='course'; q.tag=TAGS.includes(q.tag)?q.tag:u.tag; registerItem(q); }));
+    units.forEach(u=>u.q.forEach((q,i)=>{ q.id=`c${n}.${u.id}.${i}`; q.ch=n; q.d=q.d||qLevel(q.t); if(!q.gp) q.gp=[(c.units.find(x=>x.id===u.id)||{}).gp||u.t]; q.u=u; q.uid=u.id; q.cite=q.cite||u.t; q.src='course'; q.tag=TAGS.includes(q.tag)?q.tag:u.tag; registerItem(q); }));
     const seen=new Set(), cards=[];
     c.units.forEach(u=>(u.vocab||[]).forEach(v=>{ const k=v.fr+'|'+v.en; if(seen.has(k)) return; seen.add(k); cards.push(registerItem({id:`c${n}.fc.${cards.length}`, t:'fc', fr:v.fr, en:v.en, pron:v.pron, ch:n, src:'course', tag:'vocabulary', cite:'Vocabulary'})); }));
     CH[n]={n, t:c.t, sb:c.sb||'', units, cards, custom:false, imported:true, tef:escH(c.tef||''), scen:(c.scen&&c.scen.length?c.scen:['A short conversation using this chapter']).slice(0,4), wr:(c.wr&&c.wr.length?c.wr:['Write 60–80 words using this chapter\'s vocabulary and grammar.']), checklist:c.checklist||[], files:c.files||[]};
@@ -2845,7 +2988,7 @@ async function runJob(job, fromImport){
       jobSave(job); upd(); } };
     await Promise.all([worker(),worker(),worker()]);
     const units=job.built.filter(Boolean); if(!units.length) throw {code:'invalid_json'};
-    S.custom[n]={built:true, t:plan.title||('Chapitre '+n), sb:plan.sb||'', tef:plan.tef||'', scen:plan.scen||[], wr:plan.wr||[], checklist:plan.checklist||[], files:used.map(f=>f.name.split('/').pop()), units:units.map(u=>({id:u.id, ic:u.ic, t:u.t, sb:u.sb, tip:u.tip, tag:u.tag, L:u.L, q:u.q, vocab:u.vocab})), at:Date.now(), incomplete:failed.length?failed.map(i=>plan.units[i].t):undefined};
+    S.custom[n]={built:true, t:plan.title||('Chapitre '+n), sb:plan.sb||'', tef:plan.tef||'', scen:plan.scen||[], wr:plan.wr||[], checklist:plan.checklist||[], files:used.map(f=>f.name.split('/').pop()), units:units.map(u=>({id:u.id, gp:u.gp, ic:u.ic, t:u.t, sb:u.sb, tip:u.tip, tag:u.tag, L:u.L, q:u.q, vocab:u.vocab})), at:Date.now(), incomplete:failed.length?failed.map(i=>plan.units[i].t):undefined};
     const st=chState(n); st.unlocked=true; st.units=[]; st.done=false; st.check=0; S.current.ch=n;
     save(); Object.keys(ITEM).forEach(k=>delete ITEM[k]); Object.keys(CH).forEach(k=>delete CH[k]); loadChapters(); loadCustomChapters(); loadGenerated();
     if(!failed.length) jobClear();
