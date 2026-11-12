@@ -911,7 +911,7 @@ const PREF=['amélie','amelie','thomas','audrey','google français','marie','den
 function loadVoices(){
   if(!synth) return;
   voices = synth.getVoices().filter(v=>/^fr/i.test(v.lang));
-  const sc = v => (v.lang==='fr-FR'?5:0) + PREF.reduce((s,p,i)=>s+(v.name.toLowerCase().includes(p)?PREF.length-i:0),0);
+  const sc = v => (v.lang==='fr-FR'?5:0) + (v.localService?20:0) + PREF.reduce((s,p,i)=>s+(v.name.toLowerCase().includes(p)?PREF.length-i:0),0);
   voices.sort((a,b)=>sc(b)-sc(a));
   const sel=$('#voice'); sel.innerHTML='';
   if(!voices.length){ sel.innerHTML='<option>No French voice found</option>'; return; }
@@ -919,45 +919,54 @@ function loadVoices(){
   const saved=store.get('c6-voice',null), idx=voices.findIndex(v=>v.name===saved);
   sel.value = idx>=0?idx:0; voice=voices[sel.value];
 }
-let speakToken=0, ttsKeep=[], ttsFails=0;
+let speakToken=0, ttsKeep=[], ttsFails=0, inSeq=false;
 function frLocalVoice(){ return voices.find(v=>v.localService&&v.lang==='fr-FR')||voices.find(v=>v.localService)||null; }
+function ttsNote(s){ try{ micNote('voice: '+s); }catch(e){} }
 function speak(text, o={}){
   if(!synth||!text){ o.onend&&o.onend(); return; }
-  try{ if(activeRec){ activeRec.abort(); } }catch(e){}
-  const busy = synth.speaking||synth.pending;
-  if(!o.queue) synth.cancel();
+  if(!inSeq && seqStop) seqStop(true);                       // a tap on 🔊 ends any "repeat after me" sequence
+  if(typeof activeRec!=='undefined' && activeRec){ ttsNote('skipped while the mic is on'); o.onend&&o.onend(); return; }   // never talk over your recording
   const tok=++speakToken;
-  const go=(v,retry)=>{
-    if(tok!==speakToken && !o.queue) return;
+  const busy=synth.speaking||synth.pending;
+  synth.cancel();
+  let finished=false;
+  const finish=()=>{ if(finished) return; finished=true; o.el&&o.el.classList.remove('on'); if(tok===speakToken) o.onend&&o.onend(tok); };   // only the CURRENT sound reports "done"
+  const go=(v,attempt)=>{
+    if(tok!==speakToken) return;
     const u=new SpeechSynthesisUtterance(String(text).replace(/___/g,'…'));
-    u.lang = v?v.lang:'fr-FR'; if(v) try{ u.voice=v; }catch(e){} u.rate = o.rate || 0.95;
-    let started=false, done=false;
-    ttsKeep.push(u); if(ttsKeep.length>20) ttsKeep.shift();          // Chrome drops utterances that get garbage-collected
-    if(o.el) o.el.classList.add('on');
-    const fin=()=>{ if(done) return; done=true; o.el&&o.el.classList.remove('on'); o.onend && o.onend(tok); };
+    u.lang=v?v.lang:'fr-FR'; if(v) try{ u.voice=v; }catch(e){} u.rate=o.rate||0.95;
+    let started=false, dead=false;
+    ttsKeep.push(u); if(ttsKeep.length>20) ttsKeep.shift();   // Chrome drops utterances that get garbage-collected
+    o.el&&o.el.classList.add('on');
     u.onstart=()=>{ started=true; ttsFails=0; };
-    u.onend=fin;
-    u.onerror=e=>{ micNote&&micNote('voice error: '+(e&&e.error)); if(!started&&!retry&&e&&e.error!=='interrupted'&&e.error!=='canceled'){ synth.cancel(); go(frLocalVoice()||null,true); } else fin(); };
+    u.onend=()=>{ if(!dead) finish(); };
+    u.onerror=e=>{ const c=e&&e.error; if(dead) return;
+      if(c==='interrupted'||c==='canceled'){ dead=true; if(tok===speakToken) finish(); return; }
+      ttsNote('error '+c+' with '+(v?v.name:'default'));
+      dead=true; if(!started&&attempt<2&&tok===speakToken){ go(attempt===0?(frLocalVoice()||null):null, attempt+1); } else finish(); };
     try{ synth.resume(); }catch(e){}
     synth.speak(u);
-    setTimeout(()=>{                                                 // nothing came out: retry once with a voice that lives on this device
-      if(started||done||tok!==speakToken) return;
-      if(!retry){ micNote&&micNote('voice silent, retrying'); synth.cancel(); go(frLocalVoice()||null,true); }
-      else { ttsFails++; micNote&&micNote('voice failed twice'); toast(ttsFails>1?'🔇 The French voice isn\'t playing. Check your volume and sound output, then reload the app.':'🔇 No sound came out. Tap 🔊 again.'); fin(); }
-    }, 2500);
+    const wait = v&&!v.localService ? 4500 : 3000;
+    setTimeout(()=>{ if(started||dead||finished||tok!==speakToken) return;
+      if(synth.speaking){ started=true; return; }             // it IS playing, Chrome just didn't say so
+      ttsNote('silent after '+wait+'ms with '+(v?v.name:'default'));
+      dead=true; synth.cancel();
+      if(attempt<2) go(attempt===0?(frLocalVoice()||null):null, attempt+1);
+      else { ttsFails++; if(ttsFails>=2) toast('🔇 The French voice isn\'t playing. Check the volume and sound output on this device.'); finish(); }
+    }, wait);
   };
-  if(busy && !o.queue) setTimeout(()=>go(voice,false),80); else go(voice,false);   // Chrome silently drops a speak() right after cancel()
+  if(busy) setTimeout(()=>go(voice,0),120); else go(voice,0);   // Chrome silently drops a speak() right after cancel()
   return tok;
 }
 let seqStop=null;
 function speakSeq(items, {gap=true, onDone}={}){ // items: [{text, el}]
   if(seqStop){ seqStop(); }
   let i=0, stopped=false, timer=null;
-  const stop = ()=>{ stopped=true; clearTimeout(timer); synth&&synth.cancel(); items.forEach(x=>x.el&&x.el.classList.remove('on')); seqStop=null; onDone&&onDone(); };
+  const stop = (quiet)=>{ if(stopped) return; stopped=true; clearTimeout(timer); if(!quiet) synth&&synth.cancel(); items.forEach(x=>x.el&&x.el.classList.remove('on')); if(seqStop===stop) seqStop=null; onDone&&onDone(); };
   seqStop = stop;
   const step = ()=>{ if(stopped) return; if(i>=items.length){ stop(); return; }
     const it=items[i++]; it.el&&it.el.scrollIntoView({block:'nearest',behavior:'smooth'});
-    speak(it.text,{el:it.el,onend:()=>{ if(stopped) return; timer=setTimeout(step, gap ? 900+String(it.text).length*55 : 350); }}); };
+    inSeq=true; try{ speak(it.text,{el:it.el,onend:()=>{ if(stopped) return; timer=setTimeout(step, gap ? 900+String(it.text).length*55 : 350); }}); } finally{ inSeq=false; } };
   step(); return stop;
 }
 let actx=null;
@@ -1037,7 +1046,9 @@ function listen(h, retried){
   };
   rec.onerror=e=>{ const c=e.error||'unknown'; micNote('error: '+c); if(!mine()||c==='aborted') return; errored=true;
     if(c==='not-allowed'||c==='service-not-allowed'){ micOK=false; const ms=$('#mic-state'); if(ms) ms.textContent=micStateText(); finish(); h.error('blocked'); }
-    else if(c==='no-speech'){ finish(); h.error('nospeech'); } else { finish(); h.error(c); } };
+    else if(c==='no-speech'){ finish(); h.error('nospeech'); }
+    else if((c==='network'||c==='audio-capture'||c==='unknown') && !retried && !interim){ finish(); micNote('retrying after '+c); setTimeout(()=>listen(h,true),500); }   // one-off hiccup: try once more quietly
+    else { finish(); h.error(c); } };
   rec.onend=()=>{ if(!mine()){ return; } if(!finish()) return;
     const got = finals&&finals.length ? finals.filter(Boolean) : (interim ? [interim] : null);
     micNote('heard: '+(got?'«'+got[0]+'»':'nothing'));
