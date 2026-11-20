@@ -1,4 +1,4 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Coach TEF</title><meta name="description" content="French with Alexa tutor and TEF Canada coach"><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#2747c9"><script>(function(){var t="auto";try{t=JSON.parse(localStorage.getItem("ct-theme"))||"auto"}catch(e){}if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);var d=t==="dark"||(t==="auto"&&window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches);document.querySelector('meta[name="theme-color"]').setAttribute("content",d?"#181e30":"#2747c9")})()</script><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Coach TEF"><meta name="apple-mobile-web-app-status-bar-style" content="default"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}img{max-width:100%}
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Coach TEF</title><meta name="description" content="French with Alexa tutor and TEF Canada coach"><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#2747c9"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Coach TEF"><meta name="apple-mobile-web-app-status-bar-style" content="default"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap"><style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font-size:14px}img{max-width:100%}
 /* Layout: header with exam countdown, streak, due cards, Claude and sync status and a command bar; tab bar; one view at a time. Lessons, tasks and role-plays take over the main column. */
 :root{
   --bg:#f3f5f9; --surface:#ffffff; --sunk:#eef1f7; --fg:#141a2b; --muted:#5b6478; --line:#dde2ec;
@@ -36,7 +36,6 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .tab[aria-selected="true"]{background:var(--accent-soft);color:var(--accent)}
 .tab .badge{background:var(--accent);color:var(--surface);border-radius:999px;font-size:11px;padding:1px 7px}
 .tab.gear{margin-left:auto}
-.theme-btn{font:inherit;cursor:pointer;line-height:inherit}.theme-btn:hover{border-color:var(--accent)}
 .settings{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;margin-top:12px;display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center;font-size:14px}
 .settings select{font:inherit;font-size:14px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:5px 8px;max-width:220px}
 main{padding-block:18px 64px}
@@ -282,7 +281,7 @@ pre.md{white-space:pre-wrap;background:var(--sunk);border-radius:12px;padding:12
 .guide-in{max-width:760px;margin:0 auto;padding:12px 16px 40px;display:grid;gap:12px}
 .guide-top{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;background:inherit;background:var(--bg,#f4f5fa)}
 .guide-tabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
-.guide-tabs .mini{white-space:nowrap;flex:none}.guide-tabs .mini.on{background:var(--accent);color:var(--surface);border-color:var(--accent)}
+.guide-tabs .mini{white-space:nowrap;flex:none}.guide-tabs .mini.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 body.guide-open{overflow:hidden}
 #ls-guide{margin-left:6px;flex:none}
 
@@ -309,7 +308,6 @@ body.guide-open{overflow:hidden}
       <span class="stat rev" title="Cards due">🔁 <b id="st-due">0</b></span>
       <span class="stat ai off" id="st-ai" title="Claude features">✨ <b>…</b></span>
       <span class="stat ai off" id="st-sync" title="Sync">☁️ <b>off</b></span>
-      <button class="stat theme-btn" id="theme-btn" type="button" title="Night mode" aria-label="Night mode" aria-pressed="false">🌙</button>
     </div>
   </div>
   <form class="cmd" id="cmd-form" autocomplete="off">
@@ -337,7 +335,6 @@ body.guide-open{overflow:hidden}
     <label for="voice">Voix <select id="voice"><option>Default</option></select></label>
     <button class="mini" id="voice-test" type="button">🔊 Test</button>
     <label for="rate">Speed <select id="rate"><option value="0.75">Slower</option><option value="0.95" selected>Normal</option><option value="1.1">Faster</option></select></label>
-    <label for="theme">Thème <select id="theme"><option value="auto">Auto (follow system)</option><option value="light">☀️ Clair</option><option value="dark">🌙 Sombre</option></select></label>
     <label><input type="checkbox" id="sfx" checked> Sound effects</label>
     <label><input type="checkbox" id="autoplay" checked> Auto-play French after answers</label>
     <label><input type="checkbox" id="morefr"> More French in explanations</label>
@@ -928,7 +925,11 @@ function ttsNote(s){ try{ micNote('voice: '+s); }catch(e){} }
 function speak(text, o={}){
   if(!synth||!text){ o.onend&&o.onend(); return; }
   if(!inSeq && seqStop) seqStop(true);                       // a tap on 🔊 ends any "repeat after me" sequence
-  if(typeof activeRec!=='undefined' && activeRec){ ttsNote('skipped while the mic is on'); o.onend&&o.onend(); return; }   // never talk over your recording
+  if(typeof activeRec!=='undefined' && activeRec){
+    const age=Date.now()-micStartAt;
+    if((micStarted && age<35000) || (!micStarted && age<6000)){ ttsNote('skipped while the mic is on'); o.onend&&o.onend(); return; }   // never talk over a live recording
+    try{ resetMic(); }catch(e){}                                                            // a recorder that isn't really live must not block sound
+  }
   const tok=++speakToken;
   const busy=synth.speaking||synth.pending;
   synth.cancel();
@@ -941,7 +942,7 @@ function speak(text, o={}){
     let started=false, dead=false;
     ttsKeep.push(u); if(ttsKeep.length>20) ttsKeep.shift();   // Chrome drops utterances that get garbage-collected
     o.el&&o.el.classList.add('on');
-    u.onstart=()=>{ started=true; ttsFails=0; };
+    u.onstart=()=>{ started=true; ttsFails=0; }; u.onboundary=()=>{ started=true; };
     u.onend=()=>{ if(!dead) finish(); };
     u.onerror=e=>{ const c=e&&e.error; if(dead) return;
       if(c==='interrupted'||c==='canceled'){ dead=true; if(tok===speakToken) finish(); return; }
@@ -949,14 +950,15 @@ function speak(text, o={}){
       dead=true; if(!started&&attempt<2&&tok===speakToken){ go(attempt===0?(frLocalVoice()||null):null, attempt+1); } else finish(); };
     try{ synth.resume(); }catch(e){}
     synth.speak(u);
-    const wait = v&&!v.localService ? 4500 : 3000;
+    // Never stop a line that might be playing. Only Chrome's online voices need help: they cut out after ~15 s unless nudged.
+    if(v && !v.localService){ const ka=setInterval(()=>{ if(dead||finished||tok!==speakToken){ clearInterval(ka); return; } if(synth.speaking){ try{ synth.pause(); synth.resume(); }catch(e){} } }, 10000); }
+    // if NOTHING happened at all after 8 s (no start, not speaking, not queued), the voice is dead: try the device voice once
     setTimeout(()=>{ if(started||dead||finished||tok!==speakToken) return;
-      if(synth.speaking){ started=true; return; }             // it IS playing, Chrome just didn't say so
-      ttsNote('silent after '+wait+'ms with '+(v?v.name:'default'));
-      dead=true; synth.cancel();
-      if(attempt<2) go(attempt===0?(frLocalVoice()||null):null, attempt+1);
+      if(synth.speaking||synth.pending) return;
+      ttsNote('no sound at all with '+(v?v.name:'default'));
+      if(attempt<1){ dead=true; go(frLocalVoice()||null, attempt+1); }
       else { ttsFails++; if(ttsFails>=2) toast('🔇 The French voice isn\'t playing. Check the volume and sound output on this device.'); finish(); }
-    }, wait);
+    }, 8000);
   };
   if(busy) setTimeout(()=>go(voice,0),120); else go(voice,0);   // Chrome silently drops a speak() right after cancel()
   return tok;
@@ -1584,35 +1586,13 @@ const modelQuick=()=>LOC.get('ct-model-quick')||'claude-haiku-5-5';
 const aiOn = () => !!apiKey();
 async function initAI(){ setAiPill(); rerender(); }
 function setAiPill(){ const p=$('#st-ai'); if(!p) return; p.classList.toggle('off',!aiOn()); p.querySelector('b').textContent=aiOn()?'on':'off'; p.title=aiOn()?'Claude features are on':'Add your Anthropic API key in ⚙️ Settings to turn on role-play, grading and extended practice.'; }
-function repairJson(t, close=true){
-  // Fixes what models commonly get wrong: raw line breaks or tabs inside strings, trailing commas, and a reply cut off mid-way (closes open strings, arrays and objects).
-  let out='', inS=false, esc=false; const st=[];
-  for(const ch of t){
-    if(inS){ if(esc){ esc=false; out+=ch; continue; } if(ch==='\\'){ esc=true; out+=ch; continue; } if(ch==='"'){ inS=false; out+=ch; continue; }
-      out+= ch==='\n'?'\\n' : ch==='\r'?'' : ch==='\t'?'\\t' : ch; continue; }
-    if(ch==='"'){ inS=true; out+=ch; continue; }
-    if(ch==='{'||ch==='[') st.push(ch==='{'?'}':']');
-    else if(ch==='}'||ch===']'){ if(st.length) st.pop(); }
-    out+=ch;
-  }
-  if(!close&&(inS||st.length)) throw {code:'invalid_json'};
-  if(esc) out=out.slice(0,-1);
-  if(inS) out+='"';
-  out=out.replace(/[\s,]*$/,'').replace(/,\s*"[^"]*"\s*:?\s*$/,'').replace(/[:,]\s*$/,'');
-  while(st.length) out+=st.pop();
-  return out.replace(/,(\s*[}\]])/g,'$1');
-}
-function parseJsonLoose(t, {allowCut=true}={}){
-  t=String(t).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```\s*$/,'');
+function parseJsonLoose(t){
+  t=String(t).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'');
   try{ return JSON.parse(t); }catch(e){}
-  const a=t.search(/[{[]/); if(a<0) throw {code:'invalid_json'};
-  const b=Math.max(t.lastIndexOf('}'), t.lastIndexOf(']')); const body=b>a?t.slice(a,b+1):t.slice(a);
-  try{ return JSON.parse(body); }catch(e){}
-  try{ return JSON.parse(repairJson(body, allowCut)); }catch(e){}
-  if(allowCut){ try{ return JSON.parse(repairJson(t.slice(a))); }catch(e){} }
+  const a=t.indexOf('{'), b=t.lastIndexOf('}'); if(a>=0&&b>a){ try{ return JSON.parse(t.slice(a,b+1)); }catch(e){} }
   throw {code:'invalid_json'};
 }
-async function callClaude(messages, {model, maxTokens, onText, signal, meta}){
+async function callClaude(messages, {model, maxTokens, onText, signal}){
   const body={model, max_tokens:maxTokens, messages}; if(onText) body.stream=true;
   let r;
   try{ r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST', signal, headers:{'content-type':'application/json','x-api-key':apiKey(),'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}, body:JSON.stringify(body)}); }
@@ -1626,10 +1606,9 @@ async function callClaude(messages, {model, maxTokens, onText, signal, meta}){
         while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i).trim(); buf=buf.slice(i+1); if(!line.startsWith('data:')) continue;
           let ev; try{ ev=JSON.parse(line.slice(5)); }catch(e){ continue; }
           if(ev.type==='content_block_delta'&&ev.delta&&ev.delta.type==='text_delta'){ text+=ev.delta.text; onText({text, delta:ev.delta.text}); }
-          else if(ev.type==='message_delta'&&ev.delta&&ev.delta.stop_reason&&meta) meta.stop=ev.delta.stop_reason;
           else if(ev.type==='error') throw {code:/overload/i.test(ev.error&&ev.error.type)?'rate_limited':'api_error', message:ev.error&&ev.error.message}; } } }
     catch(e){ if(e&&e.code) throw e; throw {code: e&&e.name==='AbortError'?'cancelled':'network'}; }
-  } else { const d=await r.json(); text=(d.content||[]).filter(c=>c.type==='text').map(c=>c.text).join(''); if(meta) meta.stop=d.stop_reason; }
+  } else { const d=await r.json(); text=(d.content||[]).filter(c=>c.type==='text').map(c=>c.text).join(''); }
   return text;
 }
 async function ask(input, {json=false, tier='default', onText, signal, maxTokens}={}){
@@ -1640,20 +1619,10 @@ async function ask(input, {json=false, tier='default', onText, signal, maxTokens
   if(json) merged[merged.length-1].content+='\n\nReply with only valid JSON: no markdown, no code fences, no other text.';
   const model = tier==='quick' ? modelQuick() : modelMain();
   const mt=maxTokens||(json?6000:1000), stream=onText||(mt>4000?()=>{}:null);
-  const meta={};
-  const text=await callClaude(merged,{model, maxTokens:mt, onText:stream, signal, meta});
+  const text=await callClaude(merged,{model, maxTokens:mt, onText:stream, signal});
   if(!json) return text;
-  const cut=meta.stop==='max_tokens';
-  if(!cut){ try{ return parseJsonLoose(text,{allowCut:false}); }catch(e){} }
-  // Second try: if the reply was cut off, give it twice the room; either way, say what went wrong.
-  const mt2=cut?Math.min(mt*2,32000):mt, meta2={};
-  const fix=merged.map(m=>({...m})); fix[fix.length-1].content+= cut
-    ? '\n\nIMPORTANT: keep it compact (short strings, no extra whitespace) so the whole JSON fits.'
-    : '\n\nIMPORTANT: your reply must be one valid JSON value. Escape every double quote inside a string as \\" and use \\n for line breaks.';
-  try{ const again=await callClaude(fix,{model, maxTokens:mt2, onText:onText||(()=>{}), signal, meta:meta2});
-    try{ return parseJsonLoose(again,{allowCut:false}); }catch(e){}
-    return parseJsonLoose(again); }
-  catch(e){ if(e&&e.code&&e.code!=='invalid_json') throw e; return parseJsonLoose(text); }
+  try{ return parseJsonLoose(text); }
+  catch(e){ const again=await callClaude(merged,{model, maxTokens:mt, onText:()=>{}, signal}); return parseJsonLoose(again); }
 }
 function aiErr(e){ const c=e&&e.code; return c==='unavailable'?'Add your Anthropic API key in ⚙️ Settings to turn on Claude features.'
   : c==='bad_key'?'Your Anthropic API key was rejected. Check it in ⚙️ Settings.'
@@ -2646,17 +2615,6 @@ $('#voice').onchange=e=>{ voice=voices[e.target.value]; if(voice) store.set('c6-
 $('#voice-test').onclick=()=>speak("Bonjour ! Il est midi et demi, j'ai faim.");
 ['sfx','autoplay','morefr'].forEach(id=>{ const v=store.get('ct-'+id,null); if(v!==null) $('#'+id).checked=v; $('#'+id).onchange=e=>store.set('ct-'+id,e.target.checked); });
 { const r=store.get('ct-rate',null); if(r) $('#rate').value=r; $('#rate').onchange=e=>store.set('ct-rate',e.target.value); }
-{ const mq=window.matchMedia?matchMedia('(prefers-color-scheme: dark)'):null;
-  const isDark=t=>t==='dark'||(t==='auto'&&!!(mq&&mq.matches));
-  const applyTheme=t=>{ const r=document.documentElement; if(t==='light'||t==='dark') r.setAttribute('data-theme',t); else r.removeAttribute('data-theme');
-    const d=isDark(t), m=document.querySelector('meta[name="theme-color"]'); if(m) m.setAttribute('content',d?'#181e30':'#2747c9');
-    const b=$('#theme-btn'); b.textContent=d?'☀️':'🌙'; b.title=d?'Day mode':'Night mode'; b.setAttribute('aria-label',b.title); b.setAttribute('aria-pressed',String(d));
-    $('#theme').value=t; };
-  let theme=store.get('ct-theme','auto'); applyTheme(theme);
-  const setTheme=t=>{ theme=t; store.set('ct-theme',t); applyTheme(t); };
-  $('#theme').onchange=e=>setTheme(e.target.value);
-  $('#theme-btn').onclick=()=>setTheme(isDark(theme)?'light':'dark');
-  if(mq){ const f=()=>{ if(theme==='auto') applyTheme('auto'); }; mq.addEventListener?mq.addEventListener('change',f):mq.addListener&&mq.addListener(f); } }
 $('#cmd-form').addEventListener('submit',e=>{ e.preventDefault(); const v=$('#cmd').value; if(v.trim()){ runCommand(v); $('#cmd').value=''; $('#cmd').blur(); } });
 $('#cmd-help').innerHTML='Try: '+CMD_HELP.map(c=>'<code>'+escH(c)+'</code>').join(' ');
 $('#mic-state').textContent=micStateText();
@@ -2947,10 +2905,9 @@ Make a plan that covers EVERYTHING important: every grammar point and rule, ever
 Reply with only JSON:
 {"title":"short French chapter title","sb":"one line in English listing the topics","tef":"2–3 sentences: where this chapter's content appears in the TEF Canada exam (compréhension orale/écrite, expression orale/écrite, sections A/B) and what tasks use it","scen":["3 short role-play scenarios using ONLY this chapter's language"],"wr":["one course writing task, 40–80 words, using this chapter's language"],
 "checklist":["every important item in the chapter, one short line each (aim for 15–40 lines)"],
-"units":[{"id":"short-slug","t":"unit title","ic":"one emoji","sb":"what it covers in a few words","tip":"the key rule in one or two sentences, in English with French examples","gp":"the ONE grammar point this unit teaches, e.g. \"avoir au présent\" or \"articles définis\" (a vocabulary-only unit: \"vocabulary: <topic>\")","tag":"main error type: one of ${TAGS.join('|')}","files":["file names this unit draws from"],"covers":["checklist lines this unit covers, a few words each"]}]}
-Keep every string short. The units array must be complete.
+"units":[{"id":"short-slug","t":"unit title","ic":"one emoji","sb":"what it covers in a few words","tip":"the key rule in one or two sentences, in English with French examples","gp":"the ONE grammar point this unit teaches, e.g. \"avoir au présent\" or \"articles définis\" (a vocabulary-only unit: \"vocabulary: <topic>\")","tag":"main error type: one of ${TAGS.join('|')}","files":["file names this unit draws from"],"covers":["checklist lines this unit covers"]}]}
 FILES:${sourcesBlock(srcs,null,90000)}`;
-  const r=await ask(prompt,{json:true, signal, maxTokens:16000, onText});
+  const r=await ask(prompt,{json:true, signal, maxTokens:8000, onText});
   if(!r||!Array.isArray(r.units)||!r.units.length) throw {code:'invalid_json'};
   r.units=r.units.filter(u=>u&&u.t).slice(0,12).map((u,i)=>({...u, id:String(u.id||'u'+(i+1)).toLowerCase().replace(/[^a-z0-9-]/g,'').slice(0,24)||'u'+(i+1)}));
   const ids=new Set(); r.units.forEach((u,i)=>{ if(ids.has(u.id)) u.id+='-'+i; ids.add(u.id); });
@@ -3102,8 +3059,8 @@ async function runImport(files, n){
 }
 function impFail(e){
   if(!IMP||IMP.cancelled) return; IMP.running=false; const last=IMP.steps.find(s=>s.state==='run'); if(last) last.state='err';
-  IMP.status = e&&e.code==='no_files' ? 'No PDFs or exercise pages found. Drop the chapter folder, zip or PDFs.' : e&&e.code==='no_text' ? 'Couldn\'t read any text from those files (they may be scanned images).' : aiErr(e).replace(' Tap Try again.','')+(jobLoad()?' Your progress so far is saved. Tap “Try again” to continue from here.':'');
-  IMP.done='<div class="row">'+(jobLoad()?'<button class="btn solid" type="button" onclick="IMP=null;resumeImport()">↻ Try again</button>':'')+'<button class="btn ghost" type="button" data-go="chapters">Back to Chapitres</button></div>';
+  IMP.status = e&&e.code==='no_files' ? 'No PDFs or exercise pages found. Drop the chapter folder, zip or PDFs.' : e&&e.code==='no_text' ? 'Couldn\'t read any text from those files (they may be scanned images).' : aiErr(e)+(jobLoad()?' Your progress so far is saved. Tap “Resume building” in Chapitres to continue.':'');
+  IMP.done='<div class="row"><button class="btn ghost" type="button" data-go="chapters">Back to Chapitres</button></div>';
   if(IMP.visible) impRender(); else { toast('Building Chapter '+IMP.n+' stopped: '+IMP.status); IMP=null; impBanners(); }
 }
 async function runJob(job, fromImport){
