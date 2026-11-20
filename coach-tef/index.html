@@ -952,6 +952,10 @@ function speak(text, o={}){
     synth.speak(u);
     // Never stop a line that might be playing. Only Chrome's online voices need help: they cut out after ~15 s unless nudged.
     if(v && !v.localService){ const ka=setInterval(()=>{ if(dead||finished||tok!==speakToken){ clearInterval(ka); return; } if(synth.speaking){ try{ synth.pause(); synth.resume(); }catch(e){} } }, 10000); }
+    // Chrome's queue can jam: the line sits "pending" forever and nothing ever plays. Clear the jam once and try again.
+    setTimeout(()=>{ if(started||dead||finished||tok!==speakToken) return;
+      if((synth.pending||synth.speaking) && attempt<1){ ttsNote('queue stuck, resetting'); dead=true; synth.cancel(); setTimeout(()=>go(v, attempt+1),150); }
+    }, 2500);
     // if NOTHING happened at all after 8 s (no start, not speaking, not queued), the voice is dead: try the device voice once
     setTimeout(()=>{ if(started||dead||finished||tok!==speakToken) return;
       if(synth.speaking||synth.pending) return;
@@ -2654,7 +2658,8 @@ function renderSettings2(){
     <textarea class="inp" id="me-about" style="min-height:90px" placeholder="Anything Claude can use in examples: hobbies, family, food you like…">${escH(M.about)}</textarea>
     <div class="row"><button class="btn solid" id="me-save" type="button">Save</button></div>
   </details>
-  <details id="mt-box"><summary><b>🎤 Mic test</b> <span class="small muted">check that speaking works on this device</span></summary>
+  <details id="mt-box"><summary><b>🎤 Sound &amp; mic test</b> <span class="small muted">check that sound and speaking work on this device</span></summary>
+    <div class="row"><button class="btn ghost" id="snd-test" type="button">🔊 Test &amp; reset sound</button><span class="small muted" id="snd-st"></span></div>
     <p class="small muted">Tap the mic and say: <b>« Bonjour, je m'appelle Coach. Il est quinze heures trente. »</b></p>
     <div class="speak"><button class="mic" id="mt-mic" type="button" aria-label="Test the microphone" style="width:64px;height:64px">${MIC_SVG}</button><div class="status" id="mt-st">${escH(micStateText())}</div></div>
     <div id="mt-out" class="small"></div>
@@ -2668,6 +2673,9 @@ function renderSettings2(){
   </details>`;
   const diag=()=>`Browser: ${navigator.userAgent}\nSpeech recognition: ${SRC?'available':'missing'} · iOS: ${IS_IOS} · Safari: ${IS_SAFARI} · Installed app: ${matchMedia('(display-mode: standalone)').matches}\nFrench voices: ${voices.length}\nMic log:\n${micLog.join('\n')||'(empty)'}`;
   $('#mt-diag').textContent=diag();
+  $('#snd-test').onclick=()=>{ const st=$('#snd-st'); try{ synth.cancel(); synth.resume(); }catch(e){} try{ resetMic(); }catch(e){} st.textContent='Playing…'; const t0=Date.now();
+    let ok=false; speak('Bonjour ! Le son fonctionne.',{onend:()=>{ st.textContent=ok||Date.now()-t0>800?'✓ You should have heard “Bonjour ! Le son fonctionne.” Voice: '+(voice?voice.name:'default')+'. No sound? Check your Mac\'s output and volume, or quit Chrome (⌘Q) and reopen.':'⚠️ The voice ended instantly. Quit Chrome completely (⌘Q) and reopen the app.'; $('#mt-diag').textContent=diag(); }});
+    setTimeout(()=>{ ok=true; },700); };
   $('#mt-copy').onclick=async()=>{ try{ await navigator.clipboard.writeText(diag()); toast('Copied.'); }catch(e){ toast('Select the text and copy it.'); } };
   $('#mt-mic').onclick=()=>listen({ start(){ $('#mt-mic').classList.add('live'); $('#mt-st').textContent='Listening… speak now. Tap the mic again when you\'re done.'; },
     interim(t){ $('#mt-st').textContent='… '+t; },
